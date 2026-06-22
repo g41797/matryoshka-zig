@@ -1,0 +1,29 @@
+name: Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.optimize }})
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows]
+        optimize: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
+
+    steps:
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2.2.1
+        with:
+          version: 0.16.0
+
+      - run: zig build test -freference-trace --summary all -Doptimize=${{ matrix.optimize }}

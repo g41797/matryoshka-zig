@@ -1,0 +1,41 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs_site/**'
+      - 'src/**'
+      - 'recipes/**'
+      - 'build.zig'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: mlugg/setup-zig@v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Regenerate Autodoc Artifacts
+        run: ./docs_zig.sh
+
+      - name: Build MkDocs Site
+        run: |
+          pip install mkdocs-material mkdocs-awesome-pages-plugin mkdocs-minify-plugin mkdocs-open-in-new-tab mkdocs-git-revision-date-localized-plugin
+          cd docs_site && mkdocs build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/
+
+      - uses: actions/deploy-pages@v4
