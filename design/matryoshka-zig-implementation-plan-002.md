@@ -41,6 +41,7 @@ build from them, in what order, and how to know each step is done.
 - Source of truth for signatures, types, errors: `matryoshka-api-reference-006.md`.
 - Source of truth for Zig details: `matryoshka-zig-0.16-implementation-guide-001.md`.
 - Source of truth for architecture: `matryoshka-architecture-foundation-4-001.md`.
+- Architecture introduction (why, concepts, flows): `matryoshka-architecture-001.md`.
 - Never send a stack-allocated item. Use `alloc.create` or `pool.get`.
 - After transfer (`send`, `put`), set `m.* = null`. Ownership invariant.
 - After `close`, drain the returned list. Free heap items or return pool items.
@@ -480,6 +481,7 @@ Create `design/STATUS.md` in Stage 0. Newest session entry at top.
 - API: matryoshka-api-reference-006.md
 - Zig details: matryoshka-zig-0.16-implementation-guide-001.md
 - Architecture: matryoshka-architecture-foundation-4-001.md
+- Architecture introduction: matryoshka-architecture-001.md
 - Scenarios: task1-scenarios-001.md (86), task2-scenarios-001.md (61)
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - This file + the plan file.
@@ -543,6 +545,7 @@ One paragraph. What was done and why.
 | collected-context-002.md | Master reference. Paths, 27 proposals, decisions, open items, scenario counts. Read first. |
 | matryoshka-api-reference-006.md | Source of truth. Signatures, types, error sets, cancel contract, ownership lifecycle, contract violations. |
 | matryoshka-zig-0.16-implementation-guide-001.md | Zig how-to. Blocks 1-4, cancellation, Master patterns, rules, comptime opportunities, Odin→Zig appendix. |
+| matryoshka-architecture-001.md | Architecture introduction. Why matryoshka exists, concept progression, flows, layer map. MkDocs source. |
 | matryoshka-architecture-foundation-4-001.md | Language-independent architecture. Layers, channels, patterns, rationale. |
 | task1-scenarios-001.md | 86 scenarios, Layers 1-3. The Stage 1-3 test plan. |
 | task2-scenarios-001.md | 61 scenarios, Layer 4 + cross-layer + event sources + mailbox-less. The Stage 5-8 test plan. |

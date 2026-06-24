@@ -70,6 +70,7 @@
 - Source layout at top level is Odin-specific; Zig source layout to be decided separately
 
 ### Architecture Documents
+- `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/matryoshka-architecture-001.md` — why matryoshka exists, concept progression, flows, layer map (MkDocs source)
 - `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/matryoshka-architecture-foundation-4-001.md`
 - `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/matryoshka-zig-0.16-implementation-guide-001.md`
 
