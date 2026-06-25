@@ -1,0 +1,16 @@
+.{
+    .name = .matryoshka,
+    .version = "0.0.1",
+
+    .fingerprint = 0x6bdbe6e4b2bd4cc2,
+
+    .minimum_zig_version = "0.16.0",
+
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

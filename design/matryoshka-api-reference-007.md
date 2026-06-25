@@ -9,14 +9,75 @@ It provides three independent building blocks:
 - **mailbox** — ownership transport
 - **pool** — ownership lifecycle
 
-Applications combine these blocks to create coordinators, workers, services, pipelines, and other higher-level architectures.
+Applications combine these blocks to create:
+- coordinators
+- workers
+- services
+- pipelines
+- other higher-level architectures
+
 All objects follow the same ownership rules based on `PolyNode` and `NodeHandle`.
 
-Matryoshka is a system for moving ownership of handles.
-Everything transported — events, requests, mailboxes, pools — is a `NodeHandle` (`*PolyNode`).
+Matryoshka moves ownership of handles.
+Everything transported is a `NodeHandle` (`*PolyNode`):
+- events
+- requests
+- mailboxes
+- pools
+
 A `Slot` (`?NodeHandle`) is where a handle lives while you own it.
 
 Module: `@import("matryoshka")`
+
+---
+
+## Prolog: std.Io
+
+Zig 0.16 provides `std.Io` — the runtime's interface for concurrent and I/O operations.
+
+- `Io` — passed around to anything that needs threads, timers, or waiting. Think of it as "access to the runtime."
+- `Future(T)` — a result that isn't ready yet. You get the value by calling `.await()`.
+- `Io.Select` — waits on several Futures at once. Returns the first one that completes.
+- `Io.Group` — runs several tasks. Waits for all of them to finish.
+- `io.concurrent()` — runs a blocking function in a separate task. Returns a Future for the result.
+- `ConcurrentError` — spawning a task failed (e.g. single-threaded backend, no threads available).
+
+### Event sources
+
+An event source is anything that produces a `Future`.
+
+```text
+  Timer ─────────► Future(void)
+  Socket read ───► Future([]u8)
+  File I/O ──────► Future([]u8)
+  concurrent() ──► Future(T)
+                        │
+                        ▼
+                   Io.Select
+                      │   │
+                      ▼   ▼
+               completed  canceled
+               (result)   (error.Canceled)
+```
+
+### Cancel
+
+A function that waits — for data, for a timeout, for a condition — can be canceled by the runtime.
+- If a function can be canceled, its return type includes `Cancelable` in the error union.
+- `Cancelable` comes from `std.Io`.
+
+Cancel is something you do to a Future, not something that happens on its own:
+
+```text
+  concurrent() ──► Future(T)
+                      │
+              ┌───────┼───────┐
+              ▼               ▼
+          .await()        .cancel(io)
+              │               │
+              ▼               ▼
+           result      error.Canceled
+```
 
 ---
 
@@ -62,9 +123,10 @@ mailbox.receive(mbh, &slot, null)   Receiver owns NodeHandle
 
 ### What is a NodeHandle?
 
-Every user type embeds a `PolyNode`.
-A `NodeHandle` is a pointer to that embedded node.
-Matryoshka does not care what the surrounding type is — it only sees the handle.
+`NodeHandle` is a pointer to an embedded `PolyNode`.
+- Every user type embeds a `PolyNode`.
+- `NodeHandle` points to that embedded node.
+- Matryoshka only sees the handle — not the surrounding type.
 
 ```text
 User object                      Infrastructure object
@@ -134,12 +196,305 @@ pub fn is_linked(n: *PolyNode) bool
 
 ### Ownership rule
 
-Tag checks, typed casts, and `@fieldParentPtr` recovery never transfer ownership.
-These are read-only inspections of an existing node.
+These operations never transfer ownership:
+- tag checks
+- typed casts
+- `@fieldParentPtr` recovery
 
-### Defining user types
+Read-only inspections of an existing node.
 
-User types embed `poly: PolyNode` and define a unique tag address for runtime identity:
+### Defining user types — manual step by step
+
+Every PolyNode-based type needs four things:
+- A struct with an embedded `poly: PolyNode` field.
+- A unique tag address for runtime type identity.
+- A way to check the tag before casting.
+- A way to cast from `*PolyNode` back to `*YourType`.
+
+This section builds each piece manually. Understanding this is the foundation
+for everything in Matryoshka.
+
+---
+
+#### Step 1 — Define the struct
+
+Embed `poly: PolyNode`. This is the hook that lets Matryoshka see your type.
+
+```zig
+pub const Event = struct {
+    poly: PolyNode,
+    code: i32,
+};
+```
+
+What the memory looks like:
+
+```text
+Event instance
++---------------------------+
+| poly: PolyNode            |
+|   +---------------------+ |
+|   | node: DLL.Node      | |
+|   |   prev: ?*DLL.Node  | |
+|   |   next: ?*DLL.Node  | |
+|   | tag: *const anyopaque| |
+|   +---------------------+ |
+| code: i32                 |
++---------------------------+
+```
+
+Why: Matryoshka never sees `Event`. It only sees `*PolyNode`.
+The `poly` field is the bridge between your type and the infrastructure.
+
+---
+
+#### Step 2 — Create a unique tag
+
+A tag is just an address. Two different variables have two different addresses.
+Same variable always has the same address.
+
+```zig
+var _event_tag: PolyTag = .{};
+pub const EVENT_TAG: *const anyopaque = &_event_tag;
+```
+
+Why `var` not `const`: a mutable global has a guaranteed unique runtime address.
+`const` may be deduplicated by the linker.
+
+Why it's unique: each `var` declaration occupies its own memory location.
+`&_event_tag` is that location's address. No two `var` declarations share an address.
+
+```text
+Memory layout (two types):
+
+_event_tag:  [address 0x1000]  PolyTag
+_sensor_tag: [address 0x1008]  PolyTag
+
+EVENT_TAG  = 0x1000   (unique)
+SENSOR_TAG = 0x1008   (unique, different from EVENT_TAG)
+```
+
+---
+
+#### Step 3 — Set the tag at construction
+
+When you create an instance, store the tag in `poly.tag`.
+
+```zig
+var ev: Event = .{ .code = 42 };
+ev.poly = .{ .node = .{}, .tag = EVENT_TAG };
+```
+
+What happened:
+
+```text
+Before                          After
+
+Event                           Event
++------------------+            +------------------+
+| poly: PolyNode   |            | poly: PolyNode   |
+|   node: {null}   |            |   node: {null}   |
+|   tag: undefined  |            |   tag: EVENT_TAG  |
+| code: 42         |            | code: 42         |
++------------------+            +------------------+
+```
+
+Why: the tag is how you identify what type a `*PolyNode` points into.
+Without it, you cannot safely cast.
+
+---
+
+#### Step 4 — Get a pointer to the embedded PolyNode
+
+This is how your type enters the Matryoshka world.
+
+```zig
+const poly: *PolyNode = &ev.poly;
+```
+
+Now Matryoshka can work with `poly`. It does not know about `Event`.
+
+```text
+ev: Event                        poly: *PolyNode
++------------------+                    |
+| poly: PolyNode   | <-----------------+
+|   node: {null}   |
+|   tag: EVENT_TAG |
+| code: 42         |
++------------------+
+```
+
+---
+
+#### Step 5 — Check the tag before casting
+
+You have a `*PolyNode`. You need to know what it points into.
+Compare the tag:
+
+```zig
+if (poly.tag == EVENT_TAG) {
+    // safe to cast to *Event
+}
+```
+
+Why check first: `@fieldParentPtr` does not validate anything.
+If you cast a Sensor's PolyNode to `*Event`, you get garbage.
+The tag check is the only runtime safety you have.
+
+```text
+poly.tag == EVENT_TAG ?
+
+  YES → this PolyNode is inside an Event → safe to cast
+  NO  → this PolyNode is inside something else → do not cast
+```
+
+---
+
+#### Step 6 — Cast back to the outer type
+
+`@fieldParentPtr` recovers the containing struct from a pointer to its field.
+
+```zig
+const recovered: *Event = @fieldParentPtr("poly", poly);
+```
+
+What `@fieldParentPtr` does:
+
+```text
+poly: *PolyNode
+      |
+      v
++------------------+
+| poly: PolyNode   |  <-- poly points here
+|   ...            |
+| code: 42         |
++------------------+
+^
+|
+recovered: *Event      <-- @fieldParentPtr subtracts the field offset
+```
+
+The field name `"poly"` is validated at compile time.
+The offset calculation is done at compile time.
+Runtime cost: one pointer subtraction.
+
+---
+
+#### Step 7 — Two-level recovery (from list node)
+
+Inside a mailbox or pool, items are linked via `std.DoublyLinkedList`.
+The list operates on `*DoublyLinkedList.Node`, not `*PolyNode`.
+
+Recovery is two steps:
+
+```zig
+// Step 1: DLL.Node → PolyNode (done inside mailbox/pool)
+const poly: *PolyNode = @fieldParentPtr("node", dll_node_ptr);
+
+// Step 2: PolyNode → user type (done in user code, after tag check)
+const ev: *Event = @fieldParentPtr("poly", poly);
+```
+
+```text
+dll_node_ptr: *DLL.Node
+      |
+      v
++---------------------------+
+| poly: PolyNode            |
+|   +---------------------+ |
+|   | node: DLL.Node      | | <-- dll_node_ptr points here
+|   |   prev, next        | |
+|   | tag: EVENT_TAG       | |
+|   +---------------------+ |
+| code: 42                 |
++---------------------------+
+^           ^
+|           |
+|           poly: *PolyNode    (Step 1: @fieldParentPtr("node", dll_node_ptr))
+|
+ev: *Event                     (Step 2: @fieldParentPtr("poly", poly))
+```
+
+---
+
+#### Complete manual example
+
+All steps together:
+
+```zig
+// Define type
+pub const Event = struct {
+    poly: PolyNode,
+    code: i32,
+};
+
+// Create unique tag
+var _event_tag: PolyTag = .{};
+pub const EVENT_TAG: *const anyopaque = &_event_tag;
+
+// Create and initialize
+var ev: Event = .{ .code = 42 };
+ev.poly = .{ .node = .{}, .tag = EVENT_TAG };
+
+// Get PolyNode pointer
+const poly: *PolyNode = &ev.poly;
+
+// Check tag
+if (poly.tag == EVENT_TAG) {
+    // Cast back
+    const recovered: *Event = @fieldParentPtr("poly", poly);
+    // recovered.code == 42
+}
+```
+
+This works. But every type needs the same boilerplate:
+- A `var _xxx_tag` declaration.
+- A `const XXX_TAG` pointer.
+- A tag check before every cast.
+- An init that sets the tag.
+
+---
+
+### PolyHelper — all of the above, generated
+
+`PolyHelper` generates the tag, check, cast, and init for any PolyNode type.
+One call replaces all the manual boilerplate.
+
+```zig
+pub fn PolyHelper(comptime T: type) type
+```
+
+- `T` must have a field `poly: PolyNode`. Compile error otherwise.
+- Returns a namespace with four members.
+
+#### What PolyHelper generates
+
+```zig
+pub const TAG: *const anyopaque
+```
+- Unique runtime address for type `T`.
+- Same as the manual `var _tag: PolyTag = .{}; const TAG = &_tag;` pattern.
+
+```zig
+pub fn isIt(tag: *const anyopaque) bool
+```
+- Returns `tag == TAG`.
+- Same as the manual `poly.tag == EVENT_TAG` check.
+
+```zig
+pub fn cast(node: *PolyNode) ?*T
+```
+- Returns `null` if tag does not match.
+- Returns `@fieldParentPtr("poly", node)` if it does.
+- Combines the tag check and the cast in one safe call.
+
+```zig
+pub fn init(self: *T) void
+```
+- Sets `self.poly = .{ .node = .{}, .tag = TAG }`.
+- Same as the manual init in Step 3.
+
+#### Usage
 
 ```zig
 pub const Event = struct {
@@ -147,18 +502,56 @@ pub const Event = struct {
     code: i32,
 };
 
-var _event_tag: PolyTag = .{};
-pub const EVENT_TAG: *const anyopaque = &_event_tag;
+pub const EventPolyHelper = polynode.PolyHelper(Event);
 ```
 
-Tag check, typed cast, and initialization are user code — see `tests/helpers/types.zig` for the pattern.
+Naming convention: `XxxPolyHelper = polynode.PolyHelper(Xxx)`.
+
+#### The same example, now with PolyHelper
+
+```zig
+// Create and initialize (Step 3 is now one call)
+var ev: Event = .{ .code = 42 };
+EventPolyHelper.init(&ev);
+
+// Get PolyNode pointer (same as before)
+const poly: *PolyNode = &ev.poly;
+
+// Check and cast (Steps 5+6 combined, returns null on wrong tag)
+const recovered: *Event = EventPolyHelper.cast(poly) orelse unreachable;
+// recovered.code == 42
+```
+
+```text
+Manual                              With PolyHelper
+
+var _event_tag: PolyTag = .{};      (generated inside PolyHelper)
+const EVENT_TAG = &_event_tag;      EventPolyHelper.TAG
+
+poly.tag == EVENT_TAG               EventPolyHelper.isIt(poly.tag)
+
+if (poly.tag == EVENT_TAG)          EventPolyHelper.cast(poly)
+  @fieldParentPtr("poly", poly)       → ?*Event (null if wrong tag)
+
+ev.poly = .{.node=.{},.tag=TAG};    EventPolyHelper.init(&ev)
+```
+
+Same operations. Same runtime cost. Less boilerplate. Compile-time validation.
+
+See `helpers/types.zig` for the pattern.
 
 ### stdlib compatibility
 
 PolyNode embeds `std.DoublyLinkedList.Node`.
-Every PolyNode-based item participates in standard `std.DoublyLinkedList` operations — no custom list type, no adapter.
+- No custom list type.
+- No adapter.
+- Every PolyNode-based item participates in standard `std.DoublyLinkedList` operations.
 
-Batch operations like `mailbox.close()`, `mailbox.receive_batch()`, and `pool.put_all()` use plain `std.DoublyLinkedList`.
+Batch operations use plain `std.DoublyLinkedList`:
+- `mailbox.close()`
+- `mailbox.receive_batch()`
+- `pool.put_all()`
+
 Walk results with `popFirst()` — standard Zig, nothing Matryoshka-specific.
 
 ---
@@ -182,7 +575,7 @@ try mailbox.receive(inbox, &slot, null);     // slot is now non-null
 pub const MailboxHandle = NodeHandle;
 ```
 
-MailboxHandle is itself a PolyNode.
+MailboxHandle is itself a *PolyNode.
 A mailbox can be:
 - sent through another mailbox
 - stored in pools
@@ -202,17 +595,6 @@ pub fn new(io: Io, alloc: std.mem.Allocator) !MailboxHandle
 pub fn send(mbh: MailboxHandle, m: *Slot) error{Closed}!void
 ```
 - Appends handle to tail.
-- Transfers ownership — `m.*` set to null.
-- Assert:
-  - `mailbox.is_it_you(mbh.*.tag)`
-  - `m.* != null`
-  - `!polynode.is_linked(m.*)`
-
-```zig
-pub fn send_oob(mbh: MailboxHandle, m: *Slot) error{Closed}!void
-```
-- Inserts handle after last OOB handle.
-- FIFO among OOBs, all OOBs before regular handles.
 - Transfers ownership — `m.*` set to null.
 - Assert:
   - `mailbox.is_it_you(mbh.*.tag)`
@@ -240,23 +622,22 @@ pub fn try_receive(mbh: MailboxHandle, m: *Slot) error{Closed}!bool
   - `m.* == null`
 
 ```zig
-pub fn receive_batch(mbh: MailboxHandle) (error{Closed} || Cancelable)!std.DoublyLinkedList
+pub fn receive_batch(mbh: MailboxHandle) error{Closed}!std.DoublyLinkedList
 ```
 - Non-blocking.
-- Snapshots entire queue under one lock acquisition.
-- Returns empty `std.DoublyLinkedList` if queue is currently empty — does not wait, does not return error for empty.
-- Resets OOB tracking.
+- Takes everything from the queue at once.
+- Returns empty `std.DoublyLinkedList` if queue is currently empty.
+- Does not wait. Does not return error for empty.
 - Assert:
   - `mailbox.is_it_you(mbh.*.tag)`
 
 ```zig
 pub fn close(mbh: MailboxHandle) std.DoublyLinkedList
 ```
-- Idempotent.
-- Snapshots remaining handles, broadcasts to wake blocked receivers.
+- Can be called more than once.
 - Returns remaining handles as list (empty list on second call).
-- Uses `lockUncancelable`.
-- Resets OOB tracking.
+- Collects all handles still in the queue.
+- Wakes up any receivers waiting on the mailbox.
 - Assert:
   - `mailbox.is_it_you(mbh.*.tag)`
 
@@ -284,12 +665,12 @@ pub fn is_it_you(tag: *const anyopaque) bool
 
 ### Event source helpers
 
-Mailbox can participate in `Io.Select` as an event source via `Future`.
-The helper converts blocking `receive` calls to Future results.
+Mailbox as event source via `Future`.
+- `receive_future` converts blocking `receive` to a Future result.
 
-`mailbox.receive` handles cancel and close correctly in concurrent tasks:
-- When a mailbox is closed, blocked receivers wake with `error.Closed`.
-- When a task is canceled, the operation returns `error.Canceled`.
+Cancel and close in concurrent tasks:
+- Mailbox closed — blocked receivers wake with `error.Closed`.
+- Task canceled — the operation returns `error.Canceled`.
 
 #### Types
 
@@ -302,8 +683,8 @@ pub const ReceiveResult = union(enum) {
 };
 ```
 
-Result carries the handle by value — no cross-thread `*Slot` pointer.
-When `select.await()` returns `.item`, the caller is sole owner.
+- The handle is inside the result, not behind a pointer. No `*Slot` is shared across threads.
+- When you get `.item`, the handle is yours. The mailbox no longer holds it.
 
 #### Functions
 
@@ -323,21 +704,37 @@ pub fn receive_future(mbh: MailboxHandle, timeout_ns: ?u64) ConcurrentError!Io.F
 
 #### Cancel behavior
 
-- Cancel never triggers close.
 - On `error.Canceled`, the adapter returns `.canceled` — the mailbox remains open.
 - Closing is the Master's responsibility.
 
 #### When to use
 
-**Inside Matryoshka**: when handles carry ownership, use fan-in.
-- Many senders send tagged PolyNodes to one mailbox.
-- Master dispatches on tag.
-- One queue, one ownership model, one shutdown model.
+**Inside Matryoshka**: many senders push tagged PolyNodes into one mailbox.
+- Master reads them all from one place.
+- One queue, one ownership model, one shutdown path.
 
 **Bridging to external Io**: use `receive_future`.
-- Mailbox traffic alongside timers, sockets, files, or pool availability in one `Io.Select` loop.
+- Combines mailbox traffic with other sources in one `Io.Select` loop:
+  - timers
+  - sockets
+  - files
+  - pool availability
 
-### Advanced: OOB ordering
+### Advanced: OOB (out of the box)
+
+```zig
+pub fn send_oob(mbh: MailboxHandle, m: *Slot) error{Closed}!void
+```
+- Inserts handle after last OOB handle.
+- FIFO among OOBs, all OOBs before regular handles.
+- Transfers ownership — `m.*` set to null.
+- Assert:
+  - `mailbox.is_it_you(mbh.*.tag)`
+  - `m.* != null`
+  - `!polynode.is_linked(m.*)`
+
+
+OOB ordering:
 
 ```
 send(R1), send(R2):       [R1, R2]                oob=0
@@ -352,7 +749,7 @@ receive → O2:             [R1, R2, R3]            oob=0
 
 ## pool
 
-Lifecycle management with hooks.
+Lifecycle management with user supplied hooks.
 
 ```zig
 const pool = @import("matryoshka").pool;
@@ -369,7 +766,7 @@ pool.put(ph, &slot);                                      // slot is now null (i
 pub const PoolHandle = NodeHandle;
 ```
 
-PoolHandle is itself a PolyNode.
+PoolHandle is itself a *PolyNode.
 A pool can be:
 - sent through a mailbox
 - embedded into larger ownership graphs
@@ -422,7 +819,7 @@ pub fn destroy(ph: PoolHandle, alloc: std.mem.Allocator) void
 ```zig
 pub fn init(ph: PoolHandle, hooks: PoolHooks) !void
 ```
-- Registers hooks and tag set.
+- Registers hooks.
 - Called once after `new`.
 - Assert:
   - `pool.is_it_you(ph.*.tag)`
@@ -457,7 +854,6 @@ pub fn get_wait(ph: PoolHandle, tag: *const anyopaque, m: *Slot, timeout_ns: ?u6
 pub fn put(ph: PoolHandle, m: *Slot) void
 ```
 - Returns handle to pool.
-- Cancel-protected (`lockUncancelable`).
 - **Open pool**:
   - Calls `on_put` hook.
   - Policy decides keep or destroy.
@@ -475,7 +871,6 @@ pub fn put(ph: PoolHandle, m: *Slot) void
 pub fn put_all(ph: PoolHandle, list: *std.DoublyLinkedList) void
 ```
 - Returns batch of handles to pool.
-- Cancel-protected.
 - Pops from caller's list.
 - Assert:
   - `pool.is_it_you(ph.*.tag)`
@@ -484,11 +879,10 @@ pub fn put_all(ph: PoolHandle, list: *std.DoublyLinkedList) void
 ```zig
 pub fn close(ph: PoolHandle) void
 ```
-- Idempotent.
+- Can be called more than once.
 - Collects all handles from all per-tag free-lists.
 - Calls `on_close` once with the full list.
 - Broadcasts to wake blocked `get_wait` callers.
-- Cancel-protected (`lockUncancelable`).
 - Assert:
   - `pool.is_it_you(ph.*.tag)`
 
@@ -509,14 +903,14 @@ pub fn is_it_you(tag: *const anyopaque) bool
 
 ### Event source helpers
 
-Pool can participate in `Io.Select` as an event source via `Future`.
-The helper converts blocking `get_wait` calls to Future results.
+Pool as event source via `Future`.
+- `get_wait_future` converts blocking `get_wait` to a Future result.
 
-`pool.get_wait` handles cancel and close correctly in concurrent tasks:
-- When a pool is closed, blocked callers wake with `error.Closed`.
-- When a task is canceled, the operation returns `error.Canceled`.
+Cancel and close in concurrent tasks:
+- Pool closed — blocked callers wake with `error.Closed`.
+- Task canceled — the operation returns `error.Canceled`.
 
-Pool availability as an event enables the job-pool pattern:
+When a handle becomes available, the Master can react. This is the job-pool pattern:
 - Worker returns a handle.
 - Master is notified.
 - Master submits new work.
@@ -533,9 +927,9 @@ pub const PoolResult = union(enum) {
 };
 ```
 
-Result carries the handle by value — no cross-thread `*Slot` pointer.
-The `.item` arm hands ownership to the caller: the `get_wait` that produced it has already removed the handle from the pool.
-Re-spawn the event source only after deciding the handle's fate.
+- The handle is inside the result, not behind a pointer. No `*Slot` is shared across threads.
+- When you get `.item`, the handle is yours. The pool no longer holds it.
+- Create a new future only after you've decided what to do with this handle.
 
 #### Functions
 
@@ -555,13 +949,14 @@ pub fn get_wait_future(ph: PoolHandle, tag: *const anyopaque, timeout_ns: ?u64) 
 
 #### Cancel behavior
 
-- Cancel never triggers close.
 - On `error.Canceled`, the adapter returns `.canceled` — the pool remains open.
 - Closing is the Master's responsibility.
 
 ### Hook discipline
 
-- Hooks run outside the pool mutex.
+- Hooks run outside the pool's internal lock.
+- The pool updates its own state first, then releases the lock, then calls your hook.
+- Your hook code does not block other pool operations.
 - `on_get`:
   - Must either leave `m.* == null` (creation failed) OR set `m.*` to a valid node (created or reinitialized).
   - No other state is permitted.
@@ -572,7 +967,8 @@ pub fn get_wait_future(ph: PoolHandle, tag: *const anyopaque, timeout_ns: ?u64) 
   - Receives `*std.DoublyLinkedList`.
   - Walks via `popFirst()`, frees each handle.
 - Do NOT call pool functions on the same pool from inside hooks.
-  - Contract violation, not deadlock — hooks run outside the mutex, but calling back collapses the infrastructure/policy separation.
+  - Not a deadlock — hooks run outside the lock.
+  - Contract violation — the pool cannot manage what it's holding if hooks change it at the same time.
 
 ---
 
@@ -584,19 +980,17 @@ pub const mailbox = @import("mailbox.zig");
 pub const pool = @import("pool.zig");
 ```
 
-No generic `dispose`.
-Use `mailbox.destroy` and `pool.destroy` directly.
-Application types destroy themselves.
-
 ---
 
 ## Master (Layer 4) — intentionally not part of the API
 
-There is no `master` module.
-There is no `Master` struct.
-This is by design.
+No `master` module.
+No `Master` struct.
+By design.
 
-Master is an architectural role — the coordination boundary that owns and composes the lower layers.
+Master is an architectural role — the coordination boundary.
+It owns and composes the lower layers.
+
 Applications build Masters from:
 
 | What | Where it comes from |
@@ -628,29 +1022,14 @@ const Pipeline = struct { stages: [3]mailbox.MailboxHandle, ... };
 fn main(init: std.process.Init) !void { ... }
 ```
 
-Matryoshka provides the building blocks. The application assembles them.
+Matryoshka provides the building blocks.
+The application assembles them.
 
 ### Event sources
 
-In `std.Io`, an event source is anything that produces a `Future`.
-`Io.Select` multiplexes multiple Futures and returns the first one that completes.
+See **Prolog: std.Io** for the general `Future` → `Io.Select` pattern.
 
-Typical event sources:
-
-```text
-  Timer ──────► Future(void)  ──┐
-  Socket read ─► Future([]u8) ──┼──► Io.Select ──► Master dispatch
-  File I/O ───► Future([]u8) ──┘
-```
-
-A blocking operation becomes an event source by wrapping it in `io.concurrent()`:
-- The operation runs in a spawned task.
-- The task produces a `Future`.
-- The `Future` is passed to `Io.Select`.
-- `select.await()` returns the first completed result.
-- Master handles the result and re-arms the source if needed.
-
-Matryoshka uses this pattern to make mailbox and pool into event sources:
+Matryoshka plugs into the same pattern:
 
 ```text
   receive_future ──► Future(ReceiveResult) ──┐
@@ -659,35 +1038,41 @@ Matryoshka uses this pattern to make mailbox and pool into event sources:
   Socket read ─────► Future([]u8)          ──┘
 ```
 
-Mailbox and pool event sources follow the same `Future` → `Io.Select` pattern as any other `std.Io` source.
-See `mailbox.receive_future` and `pool.get_wait_future` for details.
+- `mailbox.receive_future` — mailbox as event source.
+- `pool.get_wait_future` — pool as event source.
+- Master calls `select.await()`, handles the result, re-arms the source.
 
 ---
 
-## Cancel indicator
+## Cancel model
+
+Only functions that wait on a condition can be canceled.
+Everything else runs to completion.
+
+- A waiting function blocks until a handle becomes available or a timeout expires.
+- While waiting, the runtime can cancel the operation. The function returns `error.Canceled`.
+- All other functions do their work and return. They cannot be canceled.
 
 A function is cancelable if and only if its return type includes `Cancelable` in the error union.
 The signature is the single source of truth.
 
-If `Cancelable` is not in the return type, the function is not cancelable.
-
 ## Cancel contract summary
 
-| Function | Cancelable | Cancel-protected | Notes |
-|----------|-----------|-----------------|-------|
-| `mailbox.send` | no | no | non-blocking |
-| `mailbox.send_oob` | no | no | non-blocking |
-| `mailbox.receive` | yes | no | primary cancel point |
-| `mailbox.try_receive` | no | no | non-blocking |
-| `mailbox.receive_batch` | yes | no | non-blocking |
-| `mailbox.close` | no | yes (`lockUncancelable`) | cleanup |
-| `pool.get` | no | no | non-blocking |
-| `pool.get_wait` | yes | no | primary cancel point |
-| `pool.put` | no | yes (`lockUncancelable`) | cleanup |
-| `pool.put_all` | no | yes (`lockUncancelable`) | cleanup |
-| `pool.close` | no | yes (`lockUncancelable`) | cleanup |
-| `mailbox.receive_future` | yes | no | spawns `receive` concurrently |
-| `pool.get_wait_future` | yes | no | spawns `get_wait` concurrently |
+| Function | Cancelable | Notes |
+|----------|-----------|-------|
+| `mailbox.send` | no | non-blocking |
+| `mailbox.send_oob` | no | non-blocking |
+| `mailbox.receive` | **yes** | waits for a handle |
+| `mailbox.try_receive` | no | non-blocking |
+| `mailbox.receive_batch` | no | non-blocking |
+| `mailbox.close` | no | non-blocking |
+| `pool.get` | no | non-blocking |
+| `pool.get_wait` | **yes** | waits for a handle |
+| `pool.put` | no | non-blocking |
+| `pool.put_all` | no | non-blocking |
+| `pool.close` | no | non-blocking |
+| `mailbox.receive_future` | **yes** | spawns `receive` concurrently |
+| `pool.get_wait_future` | **yes** | spawns `get_wait` concurrently |
 
 ---
 
@@ -713,8 +1098,10 @@ HELD       — owned by infrastructure (in mailbox queue or pool free-list)
 
 ## Contract violations
 
-The following are programming errors.
-Checked via `std.debug.assert` (active in Debug and ReleaseSafe, removed in ReleaseFast and ReleaseSmall):
+Programming errors.
+Checked via `std.debug.assert`:
+- Active in Debug and ReleaseSafe.
+- Removed in ReleaseFast and ReleaseSmall.
 
 - **Wrong handle type** — passing a PoolHandle where MailboxHandle is expected, or vice versa.
   - Checked via `is_it_you` on every API call.
@@ -749,9 +1136,10 @@ The following are unconditional panics (all build modes):
            Ownership
 ```
 
-Mailbox and Pool are independent — neither depends on the other.
-Both depend only on the ownership model.
-Master is where they are combined.
+Dependencies:
+- Mailbox and Pool are independent — neither depends on the other.
+- Both depend only on the ownership model.
+- Master is where they are combined.
 
 Valid combinations:
 - Layer 1 only — ownership without infrastructure
@@ -770,6 +1158,33 @@ Valid combinations:
 | 003 | 2026-06-23 | Proposal 28: Validation/assert specifications. `std.debug.assert` on every API function. `AlreadyInUse` removed from `GetError` (contract violation, not runtime error). Contract Violations section expanded. |
 | 004 | 2026-06-23 | Proposal 29: `pool.put` open/closed behavior clarified. Proposal 30: `receive_select` and `get_wait_select` removed — `Future` composes directly with `Io.Select`, dedicated Select adapters are unnecessary API surface. |
 | 005 | 2026-06-24 | Proposal 31: Reformat for readability and `///` doc comment use. Cancel indicator rule. Cancel table corrected. Event source concept added to Master with diagrams. Mailbox Integration section merged into Event source helpers. Informal terms cleaned up. |
+| 006 | 2026-06-24 | Proposal 32: Staccato rhythm for all prose. Every non-function section reformatted: short intro then bullets. Comma-separated lists broken into bullet lists. |
+
+---
+
+## Change manifest (006) — for downstream propagation
+
+### Staccato rhythm for all prose (Proposal 32)
+
+All non-function sections reformatted to follow: short intro, then bullets.
+
+Sections changed:
+- Document intro — comma-list of architectures broken into bullets, transported items broken into bullets.
+- "What is a NodeHandle?" — prose → intro + bullets.
+- Ownership rule — prose → intro + bullets.
+- "Defining user types" — dense sentences → bullets.
+- stdlib compatibility — prose paragraph → intro + bullets.
+- ReceiveResult description — prose → bullets.
+- PoolResult description — prose → bullets.
+- Event source helpers (mailbox) — prose → intro + bullets.
+- Event source helpers (pool) — prose → intro + bullets.
+- Event source explanation (Master) — tightened.
+- matryoshka root — prose → bullets.
+- Master intro — tightened.
+- Layer dependencies — prose → intro + bullets.
+- Contract violations intro — tightened.
+- Hook discipline "Do NOT" — split dense sub-bullet.
+- "When to use" bridging — comma-list → bullets.
 
 ---
 

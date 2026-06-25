@@ -42,18 +42,17 @@ Zig repo with build infrastructure to adapt. Structure from Odin kitchen, real s
 - Recipes (examples as module): `recipes/` (`cookbook.zig`, `recipes.zig`, etc.)
 - Test helpers: `src/ampe/helpers.zig` — `RunTasks` (spawn N tasks, wait all — old thread model, adapt to `Io.Group`), `AutoArrayHashMap` (managed wrapper for unmanaged hash map), `SleepMlsec`, `semaphore_waitTimeout` (uses `condition_waitTimeout`)
 - Git config: `.gitignore`, `.gitattributes`, `.gitmodules`
-- JetBrains run config: `.run/winportable_testall.yml`
+- JetBrains run config: `.run/*.yml`
 
 ### mailbox — `/home/g41797/dev/root/github.com/g41797/mailbox/`
 
 Legacy Zig mailbox. Starting point for `_Mailbox`.
 
 - `src/mailbox.zig` — `TypeErasedMailbox`, `condition_waitTimeout` helper
-- `build.zig`, `build.zig.zon`
 
 ### Design docs — `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/`
 
-- `matryoshka-api-reference-006.md` — signatures, types, error sets, cancel contract
+- `matryoshka-api-reference-007.md` — signatures, types, error sets, cancel contract, PolyHelper
 - `matryoshka-architecture-001.md` — why, concepts, flows
 - `matryoshka-architecture-foundation-4-001.md` — language-independent architecture
 - `matryoshka-zig-0.16-implementation-guide-001.md` — Zig how-to
@@ -76,9 +75,10 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 
 ### Build Order Rules (MUST)
 
-**Helper code comes first**
+**Helper code is part of its stage**
 - Implementation guide contains code that is not part of the API (e.g. `NodeMixin`, test types like `Event`, `Sensor`).
-- This code is shared by both tests and examples.
+- This code is developed in the same stage as the implementation it supports — not before.
+- It is shared by both tests and examples.
 - It must have a proper home and be written as good, reusable code.
 
 **Tests are real code**
@@ -89,6 +89,11 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 - Tests check implementation. Correctness, edge cases, error paths, state transitions, contract violations.
 - Examples show stories. Real usage patterns: "how to do fan-in", "how to seed a pool". They exercise the API in realistic, composed ways — this stress-tests the implementation harder than unit tests.
 
+**Examples must show correct resource cleanup**
+- Every heap allocation needs `errdefer` for the error path.
+- Every resource that must be released on all paths gets `defer`.
+- Examples become docs. Readers will copy them. Leaky examples teach leaky habits.
+
 **Examples have test wrappers**
 - Every example is runnable code.
 - A test wrapper calls the example and verifies it works.
@@ -96,7 +101,12 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 
 **Examples come after tested code**
 - Examples demonstrate working API. They cannot be written until the API is proven by tests.
-- Order: helper code → implementation → tests → examples (with test wrappers) → docs.
+- Order: implementation + helper code → tests → examples (with test wrappers) → docs.
+- Examples cannot start until all tests for that stage pass all kitchen scripts.
+- Each stage splits into two sub-stages:
+  - **Stage N.a** — implementation + helper code + tests. Verify via all kitchen scripts.
+  - **Stage N.b** — examples with test wrappers. Verify via all kitchen scripts.
+- No mixing tests and examples in the same work batch.
 
 **Examples become docs**
 - Verified examples are pulled into documentation (autodocs, recipes, mkdocs site).
@@ -113,6 +123,14 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 - If other docs reference the updated doc, update those links to the new version.
 - `design/context.md` is the stable entry point — always points to the latest `collected-context-NNN.md`.
 
+### Plan Versioning (MUST)
+- After each completed stage, create a new plan version (e.g., plan-003 → plan-004).
+- In the new version, collapse completed stages to a one-line summary: "Stage N — Name. DONE. See Session X."
+- Keep active + future stages in full detail.
+- Old plan versions stay as historical record. Do not delete them.
+- Update `design/context.md` to point to the new plan version.
+- Update `design/STATUS.md` Sources of Truth to reference the new plan version.
+
 ### Git (MUST)
 - Do not use git directly. All git operations go through the owner.
 
@@ -124,7 +142,7 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 - Each fix in a multi-fix plan needs its own approval.
 
 ### Implementation (MUST)
-- Source of truth for signatures, types, errors: `matryoshka-api-reference-006.md`.
+- Source of truth for signatures, types, errors: `matryoshka-api-reference-007.md`.
 - Source of truth for Zig details: `matryoshka-zig-0.16-implementation-guide-001.md`.
 - Source of truth for architecture: `matryoshka-architecture-foundation-4-001.md`.
 - Architecture introduction (why, concepts, flows): `matryoshka-architecture-001.md`.
@@ -144,8 +162,14 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 - Explicit typing: `const x: T = ...` not `const x = ...` where type is known.
 - Explicit dereference: `ptr.*.field` for pointer access.
 - Standard library first: check stdlib before adding custom definitions.
+- `errdefer` after every `alloc.create` or `try` that acquires a resource.
+- `defer` for cleanup that must run on all exit paths.
 
 ### Verification (MUST)
+- Run verification via kitchen scripts, not manual zig commands.
+  - `kitchen/build_and_test_debug.sh` — quick check: build + test Debug only.
+  - `kitchen/build_and_test_all.sh` — full check: build + test all 4 optimization modes.
+  - `kitchen/build_cross_debug.sh` — cross-compile Debug for mac + windows (build only, no test).
 - Build before test: `zig build` must succeed before `zig build test`.
 - Debug first, then ReleaseFast.
 - Full verification requires all 4 optimization modes:
@@ -154,6 +178,7 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
   3. `zig build test -Doptimize=ReleaseFast`
   4. `zig build test -Doptimize=ReleaseSmall`
 - A stage is only complete when all 4 modes pass.
+- Cross-compile check: `zig build` for macOS and Windows targets must succeed.
 - Redirect build/test output to `zig-out/` log files. Analyze via files, not shell stdout.
 
 ### Documents (MUST)
@@ -166,13 +191,13 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 - When appending to a doc, match the heading levels already in use.
 
 ### Per-stage finish steps
-1. Build: `zig build` succeeds.
-2. Test Debug: `zig build test` passes.
-3. Test ReleaseSafe: `zig build test -Doptimize=ReleaseSafe` passes.
-4. Test ReleaseFast: `zig build test -Doptimize=ReleaseFast` passes.
-5. Test ReleaseSmall: `zig build test -Doptimize=ReleaseSmall` passes.
-6. Update `design/STATUS.md` Session Log (newest entry at top, use template).
-7. Update this plan file (full plan, not a diff) if anything changed.
+1. Run `kitchen/build_and_test_debug.sh` — quick build + Debug test.
+2. Run `kitchen/build_and_test_all.sh` — full build + all 4 optimization modes.
+3. Run `kitchen/build_cross_debug.sh` — cross-compile Debug for mac + windows.
+4. Post-stage cleanup: revise all existing code for obsolete parts, wrong comments, repeated code that can be extracted into reusable sources. Fix what you find.
+5. Re-run all three kitchen scripts after cleanup fixes.
+6. Update `design/STATUS.md` Session Log (newest entry at top, use template). Session log must include a "Post-stage cleanup" row in the Verification table — what was found, what was fixed, re-run results. If nothing found, the row says "nothing to clean." Absence of this row means the rule was skipped.
+7. Create new plan version: collapse completed stages to one-line summaries, keep active + future stages in full. Update `design/context.md` and `design/STATUS.md` to point to new plan version.
 8. Sync `README.md` and any per-module README touched.
 9. Comments check. AI-sh scan. Report to owner.
 10. Rethink the next stage before starting it.
@@ -207,8 +232,18 @@ matryoshka-zig/
 │   ├── crosslayer.zig        # task2 test scenarios
 │   ├── event_source.zig      # task2 test scenarios
 │   └── mailbox_less.zig      # task2 test scenarios
+├── helpers/
+│   └── helpers.zig           # shared test/example types (Event, Sensor, NodeMixin derivatives)
 ├── examples/                 # runnable usage stories, imported by test wrappers
-│   └── examples.zig          # built as its own module, imported by tests
+│   ├── examples.zig          # root: re-exports per-block example modules
+│   ├── block1/               # polynode usage stories
+│   ├── block2/               # mailbox usage stories
+│   ├── block3/               # pool usage stories
+│   └── block4/               # composition, master, cross-layer stories
+├── kitchen/
+│   ├── build_and_test_debug.sh   # build + test Debug only
+│   ├── build_and_test_all.sh     # build + test all 4 optimization modes
+│   └── build_cross_debug.sh      # cross-compile Debug for mac + windows (build only)
 ├── design/
 │   ├── STATUS.md             # status + session log (created in Stage 0)
 │   └── *.md                  # the existing spec docs, copied in by the owner
@@ -217,8 +252,12 @@ matryoshka-zig/
 
 Notes:
 - `src/internal/` holds shared private helpers. Not exported from the root.
-- `tests/helpers/types.zig` holds the `NodeMixin` and the `Event`/`Sensor`
-  test types referenced by the API reference ("see tests/helpers/types.zig").
+- `helpers/` at repo root holds shared test/example types (`Event`, `Sensor`, `NodeMixin` derivatives).
+  Created via `createModule` (not `addModule`) — private, not exported to dependents.
+  Both `tmod` (tests) and `emod` (examples) get `addImport("helpers", helpers)`.
+  The API reference references these as "see helpers/helpers.zig".
+- `tmod` (tests) also uses `createModule` — tests are not exported.
+- Only `matryoshka` itself uses `addModule` (public, exported to dependents).
 - Examples are a separate module so production builds exclude them, and so the
   docs step can emit them as recipes (tofu pattern).
 - Each example has a test wrapper that calls it and verifies it works.
@@ -257,12 +296,16 @@ Stage 9     Docs + README + autodocs
 - `design/STATUS.md` from the template in Section 5.
 - Copy `condition_waitTimeout` from `mailbox/src/mailbox.zig` into
   `src/internal/cond_timeout.zig`, unmodified for now (Open Item 5).
+- `kitchen/build_and_test_debug.sh` — build + test Debug only.
+- `kitchen/build_and_test_all.sh` — build + test all 4 optimization modes.
+- `kitchen/build_cross_debug.sh` — cross-compile Debug for mac + windows (build only).
 
 **Scenarios to verify**: none yet.
 
 **Checkpoint**
-- `zig build` succeeds.
-- `zig build test` runs and passes the trivial test.
+- `kitchen/build_and_test_debug.sh` passes.
+- `kitchen/build_and_test_all.sh` passes.
+- `kitchen/build_cross_debug.sh` passes.
 - `zig version` reports 0.16.0.
 
 **Risks / dependencies**
@@ -542,6 +585,7 @@ Create `design/STATUS.md` in Stage 0. Newest session entry at top.
 - Plan approval is NOT code change approval.
 - Architectural changes need explicit owner approval.
 - Never overwrite important docs. New version with incremented suffix (-001, -002, etc.). Update cross-references.
+- Post-stage cleanup: after all kitchen scripts pass, revise all code for obsolete parts, wrong comments, repeated code extractable to reusable sources. Fix, re-run all three scripts. Session log must have a "Post-stage cleanup" row — its absence means the rule was skipped.
 
 ## Constraints for Next Agent (MUST)
 - Git disabled. Do NOT run any git commands.
@@ -624,7 +668,7 @@ One paragraph. What was done and why.
 | Doc | Owns |
 |-----|------|
 | collected-context-002.md | Master reference. Paths, 27 proposals, decisions, open items, scenario counts. Read first. |
-| matryoshka-api-reference-006.md | Source of truth. Signatures, types, error sets, cancel contract, ownership lifecycle, contract violations. |
+| matryoshka-api-reference-007.md | Source of truth. Signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper. |
 | matryoshka-zig-0.16-implementation-guide-001.md | Zig how-to. Blocks 1-4, cancellation, Master patterns, rules, comptime opportunities, Odin→Zig appendix. |
 | matryoshka-architecture-001.md | Architecture introduction. Why matryoshka exists, concept progression, flows, layer map. MkDocs source. |
 | matryoshka-architecture-foundation-4-001.md | Language-independent architecture. Layers, channels, patterns, rationale. |
