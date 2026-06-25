@@ -27,11 +27,11 @@
 - Architecture introduction: matryoshka-architecture-001.md
 - Tests: task1-tests-001.md, task2-tests-001.md
 - Examples: task1-examples-001.md, task2-examples-001.md
-- Scenarios (historical): task1-scenarios-001.md (86), task2-scenarios-001.md (61)
+- Scenarios (historical): task1-scenarios-001.md (89), task2-scenarios-001.md (61)
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- This file + the plan file.
+- Plan: matryoshka-zig-implementation-plan-006.md
 
 ## Participants
 - Owner: g41797 (human)
@@ -86,10 +86,44 @@ Stage 0 — Infrastructure. DONE.
 Stage 0.5 — Re-partition scenarios. DONE.
 Stage 1.a — PolyNode (impl + tests). DONE.
 Stage 1.b — PolyNode examples. DONE.
-Current: Stage 2 — Mailbox.
-Next: Show intent for Stage 2.
+Stage 2.a — Mailbox (impl + tests). DONE.
+Current: Stage 2.b — Mailbox examples.
+Next: Show intent for Stage 2.b.
 
 ## Session Log
+
+### 2026-06-25 — Session 5
+**Participants**: human + Claude
+
+**Summary**
+Stage 2.a (Mailbox impl + tests) completed with all 46 tests passing. Post-stage cleanup:
+- `src/mailbox.zig`: removed `///` doc comments; replaced manual tag management with `_MailboxPolyHelper = polynode.PolyHelper(_Mailbox)`; renamed `dll_node` → `node`.
+- `helpers/helpers.zig`: added `pub fn clearList` (replaces banned "drain" pattern).
+- `tests/layer2_mailbox.zig`: replaced local `drainList` with `helpers.clearList`; removed WHAT inline comments; added 3 multi-threaded scenarios (50 fan-in, 51 fan-out, 52 combined); added `Sensor`/`SensorPolyHelper` imports; added `freeItem` tag-dispatch helper.
+- `design/task1-scenarios-001.md`: added multi-threaded test descriptions (50–52); renumbered Layer 2 examples 53–59 and Layer 3 60–89; corrected stale note about `popFirst` link clearing.
+- Created `design/matryoshka-zig-implementation-plan-006.md`.
+- Updated `design/context.md`.
+
+**Changes**
+- `src/mailbox.zig` — PolyHelper(_Mailbox) replaces manual tag; `node` replaces `dll_node`; no doc comments
+- `helpers/helpers.zig` — added `clearList`
+- `tests/layer2_mailbox.zig` — clearList, no WHAT comments, scenarios 50/51/52, freeItem helper
+- `design/task1-scenarios-001.md` — scenarios 50–52 added; renumbered 53–89
+- `design/matryoshka-zig-implementation-plan-006.md` — new plan version
+- `design/context.md` — updated plan pointer
+- `design/STATUS.md` — this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `kitchen/build_and_test_debug.sh` | pass (49/49 tests) |
+| `kitchen/build_and_test_all.sh` | pass (49/49 tests, all 4 modes) |
+| `kitchen/build_cross_debug.sh` | pass (x86_64-macos, aarch64-macos, x86_64-windows) |
+| Post-stage cleanup | done |
+| AI-sh + banned words scan | clean |
+
+**Next**: Stage 2.b — Mailbox examples. Show intent first.
 
 ### 2026-06-25 — Session 4
 **Participants**: human + Claude

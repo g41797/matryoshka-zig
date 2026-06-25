@@ -7,5 +7,9 @@ pub fn expect(comptime err: anyerror, ok: bool, comptime msg: []const u8) anyerr
     }
 }
 
+pub fn clearList(list: *std.DoublyLinkedList) void {
+    while (list.popFirst()) |_| {}
+}
+
 const std = @import("std");
 const log = std.log;
