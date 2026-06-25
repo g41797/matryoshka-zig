@@ -1,15 +1,15 @@
-pub fn run() !void {
-    const alloc: std.mem.Allocator = testing.allocator;
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    _ = io;
     var list: std.DoublyLinkedList = .{};
 
-    defer freeRemaining(&list, alloc);
+    defer freeRemaining(&list, allocator);
 
-    const ev: *types.Event = try alloc.create(types.Event);
+    const ev: *types.Event = try allocator.create(types.Event);
     ev.* = .{ .code = 7 };
     types.EventPolyHelper.init(ev);
     list.append(&ev.*.poly.node);
 
-    const sn: *types.Sensor = try alloc.create(types.Sensor);
+    const sn: *types.Sensor = try allocator.create(types.Sensor);
     sn.* = .{ .value = 2.71 };
     types.SensorPolyHelper.init(sn);
     list.append(&sn.*.poly.node);
@@ -21,20 +21,20 @@ pub fn run() !void {
         const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
 
         if (types.EventPolyHelper.cast(poly)) |recovered_ev| {
-            try testing.expectEqual(@as(i32, 7), recovered_ev.*.code);
+            try helpers.expect(error.TagDispatchFailed, recovered_ev.*.code == 7, "wrong event code");
             processed_events += 1;
-            alloc.destroy(recovered_ev);
+            allocator.destroy(recovered_ev);
         } else if (types.SensorPolyHelper.cast(poly)) |recovered_sn| {
-            try testing.expectEqual(@as(f64, 2.71), recovered_sn.*.value);
+            try helpers.expect(error.TagDispatchFailed, recovered_sn.*.value == 2.71, "wrong sensor value");
             processed_sensors += 1;
-            alloc.destroy(recovered_sn);
+            allocator.destroy(recovered_sn);
         } else {
             return error.UnknownTag;
         }
     }
 
-    try testing.expectEqual(@as(usize, 1), processed_events);
-    try testing.expectEqual(@as(usize, 1), processed_sensors);
+    try helpers.expect(error.TagDispatchFailed, processed_events == 1, "wrong event count");
+    try helpers.expect(error.TagDispatchFailed, processed_sensors == 1, "wrong sensor count");
 }
 
 fn freeRemaining(list: *std.DoublyLinkedList, alloc: std.mem.Allocator) void {
@@ -49,6 +49,6 @@ fn freeRemaining(list: *std.DoublyLinkedList, alloc: std.mem.Allocator) void {
 }
 
 const std = @import("std");
-const testing = std.testing;
+const helpers = @import("helpers");
 const polynode = @import("matryoshka").polynode;
-const types = @import("helpers").types;
+const types = helpers.types;

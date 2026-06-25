@@ -1,33 +1,33 @@
-pub fn run() !void {
-    const alloc: std.mem.Allocator = testing.allocator;
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    _ = io;
 
-    const ev: *types.Event = try alloc.create(types.Event);
-    errdefer alloc.destroy(ev);
+    const ev: *types.Event = try allocator.create(types.Event);
+    errdefer allocator.destroy(ev);
     ev.* = .{ .code = 42 };
     types.EventPolyHelper.init(ev);
 
     var slot: polynode.Slot = &ev.*.poly;
-    try testing.expect(slot != null);
+    try helpers.expect(error.OwnershipTransferFailed, slot != null, "slot should be non-null after init");
 
     var list: std.DoublyLinkedList = .{};
     list.append(&ev.*.poly.node);
     slot = null;
-    try testing.expectEqual(@as(polynode.Slot, null), slot);
+    try helpers.expect(error.OwnershipTransferFailed, slot == null, "slot should be null after transfer");
 
     const node: *std.DoublyLinkedList.Node = list.popFirst() orelse return error.EmptyList;
     const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
     slot = poly;
-    try testing.expect(slot != null);
+    try helpers.expect(error.OwnershipTransferFailed, slot != null, "slot should be non-null after recovery");
 
     const recovered: *types.Event = types.EventPolyHelper.cast(poly) orelse return error.CastFailed;
-    try testing.expectEqual(@as(i32, 42), recovered.*.code);
+    try helpers.expect(error.OwnershipTransferFailed, recovered.*.code == 42, "wrong event code");
 
-    alloc.destroy(recovered);
+    allocator.destroy(recovered);
     slot = null;
-    try testing.expectEqual(@as(polynode.Slot, null), slot);
+    try helpers.expect(error.OwnershipTransferFailed, slot == null, "slot should be null after destroy");
 }
 
 const std = @import("std");
-const testing = std.testing;
+const helpers = @import("helpers");
 const polynode = @import("matryoshka").polynode;
-const types = @import("helpers").types;
+const types = helpers.types;

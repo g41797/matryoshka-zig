@@ -1,12 +1,12 @@
-pub fn run() !void {
-    const alloc: std.mem.Allocator = testing.allocator;
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    _ = io;
     var list: std.DoublyLinkedList = .{};
 
-    defer freeRemaining(&list, alloc);
+    defer freeRemaining(&list, allocator);
 
     var i: i32 = 0;
     while (i < 5) : (i += 1) {
-        const ev: *types.Event = try alloc.create(types.Event);
+        const ev: *types.Event = try allocator.create(types.Event);
         ev.* = .{ .code = i };
         types.EventPolyHelper.init(ev);
         list.append(&ev.*.poly.node);
@@ -17,10 +17,10 @@ pub fn run() !void {
         const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
         const ev: *types.Event = types.EventPolyHelper.cast(poly) orelse return error.CastFailed;
         sum += ev.*.code;
-        alloc.destroy(ev);
+        allocator.destroy(ev);
     }
 
-    try testing.expectEqual(@as(i32, 0 + 1 + 2 + 3 + 4), sum);
+    try helpers.expect(error.ProduceConsumeFailed, sum == 0 + 1 + 2 + 3 + 4, "wrong sum");
 }
 
 fn freeRemaining(list: *std.DoublyLinkedList, alloc: std.mem.Allocator) void {
@@ -33,6 +33,6 @@ fn freeRemaining(list: *std.DoublyLinkedList, alloc: std.mem.Allocator) void {
 }
 
 const std = @import("std");
-const testing = std.testing;
+const helpers = @import("helpers");
 const polynode = @import("matryoshka").polynode;
-const types = @import("helpers").types;
+const types = helpers.types;

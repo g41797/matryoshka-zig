@@ -6,20 +6,22 @@ pub const Message = struct {
 
 pub const MessagePolyHelper = polynode.PolyHelper(Message);
 
-pub fn run() !void {
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    _ = .{ allocator, io };
+
     var msg: Message = .{ .text = "hello", .priority = 1 };
     MessagePolyHelper.init(&msg);
 
-    try testing.expect(MessagePolyHelper.isIt(msg.poly.tag));
-    try testing.expect(!types.EventPolyHelper.isIt(msg.poly.tag));
+    try helpers.expect(error.DefineTypeFailed, MessagePolyHelper.isIt(msg.poly.tag), "expected Message tag");
+    try helpers.expect(error.DefineTypeFailed, !types.EventPolyHelper.isIt(msg.poly.tag), "unexpected Event tag");
 
     const poly: *polynode.PolyNode = &msg.poly;
     const recovered: *Message = MessagePolyHelper.cast(poly) orelse return error.CastFailed;
-    try testing.expectEqualStrings("hello", recovered.*.text);
-    try testing.expectEqual(@as(u8, 1), recovered.*.priority);
+    try helpers.expect(error.DefineTypeFailed, std.mem.eql(u8, "hello", recovered.*.text), "wrong text");
+    try helpers.expect(error.DefineTypeFailed, recovered.*.priority == 1, "wrong priority");
 }
 
 const std = @import("std");
-const testing = std.testing;
+const helpers = @import("helpers");
 const polynode = @import("matryoshka").polynode;
-const types = @import("helpers").types;
+const types = helpers.types;

@@ -24,8 +24,9 @@ pub const Builder = struct {
     }
 };
 
-pub fn run() !void {
-    const b: Builder = .{ .alloc = testing.allocator };
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    _ = io;
+    const b: Builder = .{ .alloc = allocator };
 
     const ev: *types.Event = try b.createEvent(100);
     errdefer b.destroyByTag(&ev.*.poly);
@@ -33,13 +34,13 @@ pub fn run() !void {
     const sn: *types.Sensor = try b.createSensor(9.8);
     defer b.destroyByTag(&sn.*.poly);
 
-    try testing.expectEqual(@as(i32, 100), ev.*.code);
-    try testing.expectEqual(@as(f64, 9.8), sn.*.value);
+    try helpers.expect(error.BuilderFailed, ev.*.code == 100, "wrong event code");
+    try helpers.expect(error.BuilderFailed, sn.*.value == 9.8, "wrong sensor value");
 
     b.destroyByTag(&ev.*.poly);
 }
 
 const std = @import("std");
-const testing = std.testing;
+const helpers = @import("helpers");
 const polynode = @import("matryoshka").polynode;
-const types = @import("helpers").types;
+const types = helpers.types;
