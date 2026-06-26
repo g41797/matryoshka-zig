@@ -52,7 +52,7 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 
 ### Design docs — `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/`
 
-- `matryoshka-api-reference-008.md` — **primary source of truth**: signatures, types, error sets, cancel contract, PolyHelper, invariants, thread-safety, complexity. Wins over all other sources on any conflict.
+- `matryoshka-api-reference-010.md` — **primary source of truth**: signatures, types, error sets, cancel contract, PolyHelper, invariants, thread-safety, complexity, io.concurrent and Io.Group verified call syntax. Wins over all other sources on any conflict.
 - `matryoshka-architecture-001.md` — why, concepts, flows
 - `matryoshka-architecture-foundation-4-001.md` — language-independent architecture
 - `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-008.md` before use.
@@ -151,7 +151,7 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 - Each fix in a multi-fix plan needs its own approval.
 
 ### Implementation (MUST)
-- Source of truth for signatures, types, errors: `matryoshka-api-reference-009.md`. Wins over all other sources.
+- Source of truth for signatures, types, errors: `matryoshka-api-reference-010.md`. Wins over all other sources.
 - Implementation guide (`matryoshka-zig-0.16-implementation-guide-001.md`) is OLD — verify every detail against the API reference before use.
 - Source of truth for architecture: `matryoshka-architecture-foundation-4-001.md`.
 - Architecture introduction (why, concepts, flows): `matryoshka-architecture-001.md`.
@@ -399,6 +399,6 @@ Totals: 94 task1 (Stages 1-4), 61 task2 (Stages 5-8).
 | Doc | Owns |
 |-----|------|
 | collected-context-002.md | Master reference. Paths, 27 proposals, decisions, open items, scenario counts. Read first. |
-| matryoshka-api-reference-009.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper, tag identity (class vs instance), infra transport patterns. Wins over all other sources. |
+| matryoshka-api-reference-010.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper, tag identity (class vs instance), infra transport patterns, io.concurrent and Io.Group verified call syntax. Wins over all other sources. |
 | matryoshka-zig-0.16-implementation-guide-001.md | **OLD — verify all details against API reference before use.** Zig how-to patterns: struct layout, condition_waitTimeout, cancel mechanics, Odin→Zig appendix. |
 | matryoshka-architecture-001.md | Architecture introduction. Why matryoshka exists, concept progression, flows, layer map. MkDocs source. |

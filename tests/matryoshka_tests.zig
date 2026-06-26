@@ -14,6 +14,7 @@ test {
     _ = @import("layer3_examples.zig");
     _ = @import("layer4_infra.zig");
     _ = @import("layer4_examples.zig");
+    _ = @import("layer4_master.zig");
 }
 
 const std = @import("std");

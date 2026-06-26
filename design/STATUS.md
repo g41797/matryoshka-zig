@@ -21,7 +21,7 @@
 - AI-sh scan after every stage that changes *.md or *.zig.
 
 ## Sources of Truth
-- API: matryoshka-api-reference-008.md
+- API: matryoshka-api-reference-010.md
 - Zig details: matryoshka-zig-0.16-implementation-guide-001.md
 - Architecture: matryoshka-architecture-foundation-4-001.md
 - Architecture introduction: matryoshka-architecture-001.md
@@ -34,7 +34,7 @@
 - Plan: matryoshka-zig-implementation-plan-009.md
 
 ## Participants
-- Owner: g41797 (human)
+- Owner(g41797-human): design, decision-making
 - Claude: implementation, tests
 
 ## Project
@@ -90,10 +90,43 @@ Stage 2.a — Mailbox (impl + tests). DONE.
 Stage 2.b — Mailbox examples. DONE.
 Stage 2.5 — Pre-Stage-3 fixes. DONE.
 Stage 3 — Pool (impl + tests + examples). DONE.
-Current: Stage 4 — DONE (97/97 tests).
-Next: Stage 5 — Master (composition). Show intent first.
+Stage 4 — DONE (97/97 tests).
+Current: Stage 5.a — DONE (99/99 tests).
+Next: Stage 5.b — Master examples. Show intent first.
 
 ## Session Log
+
+### 2026-06-26 — Session 10
+**Participants**: human + Claude
+
+**Summary**
+Stage 5.a (Master — impl + tests) completed.
+
+Two new tests using real `Io.Threaded.init` concurrency (not `global_single_threaded`):
+- Scenario 1: single worker via `io.concurrent` + `Future.await`
+- Scenario 2: 3-worker group via `Io.Group` + `group.concurrent` + `group.await`
+
+Key finding during coding: `group.concurrent` worker must return exactly `error{Canceled}!void` — no other errors allowed. Worker catches `error.Closed` and `error.Timeout` from `mailbox.receive` internally; only propagates `error.Canceled`.
+
+Pre-stage doc work (Session 9 continuation):
+- `design/matryoshka-api-reference-010.md` — new version (api-ref-009 + `### io.concurrent and Io.Group — verified call syntax` subsection).
+- `design/context.md`, `design/matryoshka-zig-implementation-plan-009.md`, `design/STATUS.md`, `design/matryoshka-architecture-001.md` — all updated to reference api-reference-010.
+
+**Changes**
+- `tests/layer4_master.zig` — new file: 2 tests (scenarios 1-2)
+- `tests/matryoshka_tests.zig` — added layer4_master import
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `kitchen/build_and_test_debug.sh` | pass (99/99 tests) |
+| `kitchen/build_and_test_all.sh` | pass (99/99 tests, all 4 modes) |
+| `kitchen/build_cross_debug.sh` | not yet run — owner handles git/CI |
+| Post-stage cleanup | no obsolete parts found |
+| AI-sh + banned words scan | clean |
+
+**Next**: Stage 5.b — Master examples. Show intent first.
 
 ### 2026-06-26 — Session 9
 **Participants**: human + Claude

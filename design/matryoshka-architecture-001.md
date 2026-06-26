@@ -283,7 +283,7 @@ const event = @fieldParentPtr(Event, "poly", node);
 - For infra handles (`MailboxHandle`, `PoolHandle`): the internal structs are private. No fields can be added. Tag identifies the class only.
   - Instance identity is resolved by pointer comparison against known handles.
   - Role is established by protocol: the channel an infra handle arrived on, message ordering, or prior agreement.
-- See `matryoshka-api-reference-009.md` § "Tag identity — class, not instance" for the worker-finish-signal and wrapper patterns.
+- See `matryoshka-api-reference-010.md` § "Tag identity — class, not instance" for the worker-finish-signal and wrapper patterns.
 
 Summary so far:
 

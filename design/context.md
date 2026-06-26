@@ -5,7 +5,7 @@
 - One fact per bullet.
 - No prose paragraphs with comma-separated lists.
 
-API reference: [matryoshka-api-reference-009.md](matryoshka-api-reference-009.md) — signatures, types, error sets, cancel contract, PolyHelper, tag identity (class vs instance), infra transport patterns, invariants, thread-safety, complexity
+API reference: [matryoshka-api-reference-010.md](matryoshka-api-reference-010.md) — signatures, types, error sets, cancel contract, PolyHelper, tag identity (class vs instance), infra transport patterns, invariants, thread-safety, complexity, io.concurrent and Io.Group verified call syntax
 
 Architecture: [matryoshka-architecture-001.md](matryoshka-architecture-001.md) — why matryoshka exists, concept progression, flows, layers
 

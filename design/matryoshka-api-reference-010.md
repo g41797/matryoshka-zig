@@ -554,6 +554,58 @@ Batch operations use plain `std.DoublyLinkedList`:
 
 Walk results with `popFirst()` — standard Zig, nothing Matryoshka-specific.
 
+### Tag identity — class, not instance
+
+`PolyHelper(T)` generates one static `_tag: PolyTag` per type `T` at comptime.
+`TAG` is a pointer to that static — the same address for every instance of `T`.
+
+Tag dispatch (`is_it_you`, `isIt`, `cast`) answers one question: **"is this a T?"**
+It does not answer: "which T?" or "what role does this T play?"
+
+For user-defined types (Event, Sensor, etc.):
+- Tag identifies the class.
+- Instance fields carry the role. The user adds a `kind` or `role` field to discriminate.
+
+For infra handles (MailboxHandle, PoolHandle):
+- `_Mailbox` and `_Pool` are private structs. The user cannot add fields.
+- Tag identifies the class only. No per-instance role information is accessible.
+- **Instance identity**: resolved by pointer comparison against known handles.
+  E.g. `received == worker_mbh` identifies which specific mailbox arrived.
+- **Role**: established by protocol — the channel the handle arrived on, message
+  ordering, or prior agreement between sender and receiver.
+
+#### Transporting infra handles — valid patterns
+
+**Worker-finish-signal pattern**
+
+Master creates `worker_mbh`, spawns a worker thread and passes `worker_mbh` as parameter.
+Worker processes items until a shutdown signal, then:
+- Sends `worker_mbh` back to master's inbox (unclosed) as the finish signal.
+- Exits.
+
+Master receives a PolyNode from its inbox:
+- `mailbox.is_it_you(received.*.tag)` — confirms class (it is a mailbox).
+- `received == worker_mbh` — confirms instance (it is the expected worker mailbox).
+- Master closes and destroys `worker_mbh`.
+- Master joins the thread (OS resource cleanup only — the mailbox return was the logical finish signal).
+
+This pattern replaces a thread join or a separate shutdown message with ownership transfer.
+
+**Wrapper pattern** (for tag-level role discrimination)
+
+When tag dispatch must distinguish roles, wrap the handle in a user-defined PolyNode struct:
+
+```zig
+const WorkerInbox = struct {
+    poly: PolyNode,
+    handle: mailbox.MailboxHandle,
+};
+pub const WorkerInboxPolyHelper = polynode.PolyHelper(WorkerInbox);
+```
+
+`WorkerInboxPolyHelper.TAG` is distinct from `MailboxPolyHelper.TAG`.
+The receiver dispatches on `WorkerInboxPolyHelper.TAG` and finds the embedded handle.
+
 ---
 
 ## mailbox
@@ -1060,6 +1112,124 @@ fn main(init: std.process.Init) !void { ... }
 Matryoshka provides the building blocks.
 The application assembles them.
 
+### io.concurrent and Io.Group — verified call syntax
+
+Verified from `std/Io.zig` (Zig 0.16.0) and confirmed against the ICE agent reference implementation.
+
+#### io.concurrent
+
+Spawns one task, returns a `Future` for its result.
+
+```zig
+// Signature (from Io.zig line 2365):
+pub fn concurrent(
+    io: Io,
+    function: anytype,
+    args: std.meta.ArgsTuple(@TypeOf(function)),
+) ConcurrentError!Future(@typeInfo(@TypeOf(function)).@"fn".return_type.?)
+```
+
+Call pattern:
+
+```zig
+var fut = try io.concurrent(workerFn, .{&ctx});
+// ... do other work ...
+try fut.await(io);   // blocks until worker exits; returns worker's return type
+```
+
+- `args` is a tuple — `.{arg1, arg2, ...}` — passed verbatim to `function`.
+- No `io` is injected. The worker receives exactly what is in `args`.
+- If the worker needs `io`, pass it explicitly: `.{io, &ctx}`.
+- `fut.await(io)` returns the worker's return type directly. Use `try` if it is an error union.
+- `fut.cancel(io)` injects `error.Canceled` at the worker's next cancellation point, then awaits.
+- `Future` is a resource — must call `await` or `cancel` exactly once.
+
+Worker function for `io.concurrent`:
+
+```zig
+fn workerFn(ctx: *WorkerCtx) !void {
+    // worker logic — mailbox.receive, pool.get_wait, etc.
+    // io is accessed through the mailbox/pool (they store it internally)
+}
+```
+
+#### Io.Group
+
+Runs multiple tasks. Awaits or cancels all at once.
+
+```zig
+// Signature (from Io.zig line 1218):
+pub const Group = struct {
+    pub const init: Group  // compile-time constant, not a function call
+
+    pub fn concurrent(g: *Group, io: Io, function: anytype,
+        args: std.meta.ArgsTuple(@TypeOf(function))) ConcurrentError!void
+
+    pub fn await(g: *Group, io: Io) Cancelable!void   // wait for all
+    pub fn cancel(g: *Group, io: Io) void              // cancel all, then wait
+};
+```
+
+Call pattern:
+
+```zig
+var group: std.Io.Group = .init;
+defer group.cancel(io);   // safe: no-op if already awaited
+
+try group.concurrent(io, workerFn, .{&ctx1});
+try group.concurrent(io, workerFn, .{&ctx2});
+try group.concurrent(io, workerFn, .{&ctx3});
+
+try group.await(io);   // blocks until all workers exit
+```
+
+- Worker return type must be coercible to `Cancelable!void`.
+  - `void`, `!void`, `Cancelable!void` all work.
+  - `error.Canceled` returned by a worker is swallowed — it is a cancellation propagation boundary.
+- `group.await(io)` returns `Cancelable!void` — use `try`.
+- `group.cancel(io)` injects `error.Canceled` into all running workers, then waits. Returns `void`.
+- `group.cancel(io)` is safe to call if already awaited — it is a no-op.
+- `group.concurrent` after `group.await` starts a new round of tasks in the same group.
+
+#### Io backend for Layer 4 tests and examples
+
+Layer 1-3 tests use `std.Io.Threaded.global_single_threaded.*.io()` — no concurrency needed.
+
+Layer 4 tests and examples need real concurrency (`io.concurrent`, `Io.Group`):
+- Use `std.Io.Threaded.init(allocator, .{})` to get a real backend.
+- Call `.deinit()` when done.
+
+```zig
+// In a Layer 4 test:
+var threaded = try std.Io.Threaded.init(std.testing.allocator, .{});
+defer threaded.deinit();
+const io: std.Io = threaded.io();
+```
+
+```zig
+// In a Layer 4 example (run function):
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    // io is passed in — examples never create the backend themselves
+}
+```
+
+```zig
+// In the test wrapper for a Layer 4 example:
+test "17 - minimal master" {
+    std.testing.log_level = .debug;
+    var threaded = try std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io: std.Io = threaded.io();
+    try layer4.minimal_master.run(std.testing.allocator, io);
+}
+```
+
+Key rules:
+- `std.testing.io` — not used in this project, even in test files.
+- `global_single_threaded` — Layer 1-3 only. Returns `error.ConcurrencyUnavailable` for `io.concurrent`.
+- `Io.Threaded.init` — Layer 4 tests and example wrappers.
+- Examples receive `std.Io` as a parameter. They never import or reference `std.testing`.
+
 ### Event sources
 
 See **Prolog: std.Io** for the general `Future` → `Io.Select` pattern.
@@ -1250,6 +1420,8 @@ Valid combinations:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 010 | 2026-06-26 | New `### io.concurrent and Io.Group — verified call syntax` subsection in Master section. Covers exact call patterns (verified from std/Io.zig + ICE agent), no-io-injection rule, worker return type constraint, Future resource rules, Io backend selection for Layer 4 tests and examples. |
+| 009 | 2026-06-26 | Tag identity section: class vs instance, infra handles have no user-visible fields, worker-finish-signal pattern, wrapper pattern for role discrimination. |
 | 008 | 2026-06-26 | Pool ownership flow diagram. Ownership invariants section. Cancellation ownership contract section. Thread-safety contract table. Complexity guarantees table. Zero timeout semantics in receive and get_wait. Multiple waiter fairness note. Strengthened hook reentrancy rules. |
 | 001 | 2026-06-20 | Initial API reference (Proposal 8) |
 | 002 | 2026-06-23 | Proposal 27: `MayItem` → `Slot`, `*PolyNode` → `NodeHandle`. Visual ownership model added to intro. `MailboxHandle = NodeHandle`, `PoolHandle = NodeHandle`. All "item" language updated to "handle" in descriptions. |
@@ -1257,6 +1429,46 @@ Valid combinations:
 | 004 | 2026-06-23 | Proposal 29: `pool.put` open/closed behavior clarified. Proposal 30: `receive_select` and `get_wait_select` removed — `Future` composes directly with `Io.Select`, dedicated Select adapters are unnecessary API surface. |
 | 005 | 2026-06-24 | Proposal 31: Reformat for readability and `///` doc comment use. Cancel indicator rule. Cancel table corrected. Event source concept added to Master with diagrams. Mailbox Integration section merged into Event source helpers. Informal terms cleaned up. |
 | 006 | 2026-06-24 | Proposal 32: Staccato rhythm for all prose. Every non-function section reformatted: short intro then bullets. Comma-separated lists broken into bullet lists. |
+
+---
+
+## Change manifest (010) — for downstream propagation
+
+### io.concurrent and Io.Group — verified call syntax
+
+New `### io.concurrent and Io.Group — verified call syntax` subsection in `## Master (Layer 4)`.
+
+Source: `std/Io.zig` (Zig 0.16.0) lines 2326–2380 (`async`, `concurrent`) and 1218–1309 (`Group`). Cross-checked against ICE agent reference implementation (`media-protocols-master/src/ice/agent.zig`).
+
+- `io.concurrent(fn, .{args...})` — exact tuple syntax. Returns `ConcurrentError!Future(ReturnType)`.
+- No io injection into workers. Args passed verbatim via `@call(.auto, function, args.*)`.
+- `fut.await(io)` returns `ReturnType` directly. Use `try` when `ReturnType` is an error union.
+- `fut.cancel(io)` injects `error.Canceled`, then awaits. Returns `ReturnType`.
+- `Future` is a resource — call `await` or `cancel` exactly once.
+- `Io.Group = .init` — compile-time constant, not a function call.
+- `group.concurrent(io, fn, .{args...})` — same tuple syntax as `io.concurrent`.
+- Worker return type for Group must coerce to `Cancelable!void`. `void` and `!void` both work.
+- `group.await(io)` returns `Cancelable!void`.
+- `group.cancel(io)` returns `void`. Safe to call after `await` (no-op).
+- Layer 4 tests: use `std.Io.Threaded.init(allocator, .{})` — not `global_single_threaded`, not `testing.io`.
+- Examples: receive `std.Io` as parameter, never create the backend, never import `std.testing`.
+
+---
+
+## Change manifest (009) — for downstream propagation
+
+### Tag identity — class, not instance
+
+New `### Tag identity — class, not instance` subsection in `## polynode`, after `### stdlib compatibility`.
+
+- Explains that `PolyHelper(T).TAG` is a comptime-generated static — one per type, shared by all instances.
+- Tag dispatch answers "is this a T?" not "which T?" or "what role?".
+- User-defined types: user adds `kind`/`role` fields for per-instance discrimination.
+- Infra handles (`_Mailbox`, `_Pool` are private): no user-visible fields; tag identifies class only.
+- Instance identity: pointer comparison against known handles.
+- Role: established by protocol between sender and receiver.
+- Worker-finish-signal pattern documented with full flow.
+- Wrapper pattern documented for tag-level role discrimination.
 
 ---
 
