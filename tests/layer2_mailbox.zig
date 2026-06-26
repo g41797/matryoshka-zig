@@ -863,13 +863,6 @@ test "52 - combined (3+2+main): fan-in + fan-out, close after 100ms" {
     try testing.expectEqual(total_sent, total_received + remaining_count);
 }
 
-fn freeItem(poly: *PolyNode, alloc: std.mem.Allocator) void {
-    if (EventPolyHelper.cast(poly)) |ev| {
-        alloc.destroy(ev);
-    } else if (SensorPolyHelper.cast(poly)) |sn| {
-        alloc.destroy(sn);
-    }
-}
 
 const std = @import("std");
 const testing = std.testing;
@@ -890,3 +883,4 @@ const Event = types.Event;
 const Sensor = types.Sensor;
 const EventPolyHelper = types.EventPolyHelper;
 const SensorPolyHelper = types.SensorPolyHelper;
+const freeItem = helpers.freeItem;

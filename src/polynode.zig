@@ -11,12 +11,12 @@ pub const PolyNode = struct {
 pub const NodeHandle = *PolyNode;
 pub const Slot = ?NodeHandle;
 
-pub fn reset(n: *PolyNode) void {
+pub inline fn reset(n: *PolyNode) void {
     n.*.node.prev = null;
     n.*.node.next = null;
 }
 
-pub fn is_linked(n: *PolyNode) bool {
+pub inline fn is_linked(n: *PolyNode) bool {
     return n.*.node.prev != null or n.*.node.next != null;
 }
 
@@ -30,7 +30,7 @@ pub fn PolyHelper(comptime T: type) type {
             return tag == TAG;
         }
 
-        pub fn cast(node: *PolyNode) ?*T {
+        pub inline fn cast(node: *PolyNode) ?*T {
             if (node.*.tag != TAG) return null;
             return @fieldParentPtr("poly", node);
         }
@@ -49,3 +49,4 @@ fn validatePolyType(comptime T: type) void {
 }
 
 const std = @import("std");
+const Node = std.DoublyLinkedList.Node;

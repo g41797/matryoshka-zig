@@ -27,11 +27,11 @@
 - Architecture introduction: matryoshka-architecture-001.md
 - Tests: task1-tests-001.md, task2-tests-001.md
 - Examples: task1-examples-001.md, task2-examples-001.md
-- Scenarios (historical): task1-scenarios-001.md (89), task2-scenarios-001.md (61)
+- Scenarios (historical): task1-scenarios-001.md (92), task2-scenarios-001.md (61)
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-zig-implementation-plan-006.md
+- Plan: matryoshka-zig-implementation-plan-007.md
 
 ## Participants
 - Owner: g41797 (human)
@@ -87,17 +87,73 @@ Stage 0.5 — Re-partition scenarios. DONE.
 Stage 1.a — PolyNode (impl + tests). DONE.
 Stage 1.b — PolyNode examples. DONE.
 Stage 2.a — Mailbox (impl + tests). DONE.
-Current: Stage 2.b — Mailbox examples.
-Next: Show intent for Stage 2.b.
+Stage 2.b — Mailbox examples. DONE.
+Current: Stage 3 — Pool (impl + tests + examples).
+Next: Show intent for Stage 3.
 
 ## Session Log
+
+### 2026-06-26 — Session 6
+**Participants**: human + Claude
+
+**Summary**
+Stage 2.b (Mailbox examples) completed with 59/59 tests passing. Post-stage cleanup:
+- `src/mailbox.zig`: added `polynode.reset(poly)` after `popFirst()` in both `receive` and `try_receive` — critical fix for `!is_linked` assert when re-sending received items from multi-element queues.
+- `helpers/helpers.zig`: added `freeItem` (tag-dispatch free for Event+Sensor) and `freeList` (walk + freeItem each node).
+- `tests/layer2_mailbox.zig`: removed local `freeItem` function; added `const freeItem = helpers.freeItem` alias.
+- `examples/layer2/`: 10 examples implemented (53-62): simple_send_receive, worker_loop, oob_signal, pipeline, request_response, fan_in, shutdown_cleanup, batch_processing, fan_out, shutdown_exit. Multi-threaded: 54, 56, 57, 58, 61, 62.
+- `examples/layer2/shutdown_exit.zig`: local `ShutdownCommand` PolyNode type (not raw sentinel); `ShutdownCommandPolyHelper = polynode.PolyHelper(ShutdownCommand)`.
+- `examples/examples.zig`: added layer2.
+- `tests/layer2_examples.zig`: 10 test wrappers (tests 53-62).
+- `tests/matryoshka_tests.zig`: added layer2_examples import.
+- `design/task1-examples-001.md`: renumbered Layer2 examples 50-56 → 53-62; added 60-62; renumbered Layer3 examples 83-86 → 89-92.
+- `design/task1-scenarios-001.md`: added examples 60-62; renumbered Layer3 tests 60-85 → 63-88; renumbered Layer3 examples 86-89 → 89-92.
+- `design/matryoshka-zig-implementation-plan-007.md`: new plan version; all stages through 2.b collapsed; Stage 3 uses updated scenario numbers (63-88 tests, 89-92 examples); total 92 task1 / 153 total.
+- `design/context.md`: updated plan pointer to plan-007; updated example count to 19.
+- `design/STATUS.md`: this entry.
+
+**Changes**
+- `src/mailbox.zig` — `polynode.reset(poly)` added in receive + try_receive after popFirst
+- `helpers/helpers.zig` — added freeItem and freeList
+- `tests/layer2_mailbox.zig` — local freeItem removed; const freeItem = helpers.freeItem alias added
+- `examples/layer2/simple_send_receive.zig` — scenario 53
+- `examples/layer2/worker_loop.zig` — scenario 54
+- `examples/layer2/oob_signal.zig` — scenario 55
+- `examples/layer2/pipeline.zig` — scenario 56
+- `examples/layer2/request_response.zig` — scenario 57
+- `examples/layer2/fan_in.zig` — scenario 58
+- `examples/layer2/shutdown_cleanup.zig` — scenario 59
+- `examples/layer2/batch_processing.zig` — scenario 60
+- `examples/layer2/fan_out.zig` — scenario 61
+- `examples/layer2/shutdown_exit.zig` — scenario 62
+- `examples/layer2/layer2.zig` — re-exports all 10
+- `examples/examples.zig` — added layer2
+- `tests/layer2_examples.zig` — 10 test wrappers
+- `tests/matryoshka_tests.zig` — imports layer2_examples
+- `design/task1-examples-001.md` — renumbered Layer2+Layer3 examples
+- `design/task1-scenarios-001.md` — added 60-62; renumbered Layer3
+- `design/matryoshka-zig-implementation-plan-007.md` — new plan version
+- `design/context.md` — plan + example count updated
+- `design/STATUS.md` — this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `kitchen/build_and_test_debug.sh` | pass (59/59 tests) |
+| `kitchen/build_and_test_all.sh` | pass (59/59 tests, all 4 modes) |
+| `kitchen/build_cross_debug.sh` | pass (x86_64-macos, aarch64-macos, x86_64-windows) |
+| Post-stage cleanup | mailbox.zig polynode.reset fix; helpers freeItem/freeList; layer2_mailbox alias |
+| AI-sh + banned words scan | clean |
+
+**Next**: Stage 3 — Pool. Show intent first.
 
 ### 2026-06-25 — Session 5
 **Participants**: human + Claude
 
 **Summary**
 Stage 2.a (Mailbox impl + tests) completed with all 46 tests passing. Post-stage cleanup:
-- `src/mailbox.zig`: removed `///` doc comments; replaced manual tag management with `_MailboxPolyHelper = polynode.PolyHelper(_Mailbox)`; renamed `dll_node` → `node`.
+- `src/mailbox.zig`: removed `///` doc comments; replaced manual tag management with `MailboxPolyHelper = polynode.PolyHelper(_Mailbox)`; renamed `dll_node` → `node`.
 - `helpers/helpers.zig`: added `pub fn clearList` (replaces banned "drain" pattern).
 - `tests/layer2_mailbox.zig`: replaced local `drainList` with `helpers.clearList`; removed WHAT inline comments; added 3 multi-threaded scenarios (50 fan-in, 51 fan-out, 52 combined); added `Sensor`/`SensorPolyHelper` imports; added `freeItem` tag-dispatch helper.
 - `design/task1-scenarios-001.md`: added multi-threaded test descriptions (50–52); renumbered Layer 2 examples 53–59 and Layer 3 60–89; corrected stale note about `popFirst` link clearing.

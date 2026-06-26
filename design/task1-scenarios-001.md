@@ -98,6 +98,9 @@ are intentionally excluded. Layers 1–3 must be fully testable without them.
 57. **Request-response** — two mailboxes, send request to one, receive response from the other
 58. **Fan-in** — multiple senders to one mailbox, single receiver processes all
 59. **Shutdown with remaining item cleanup** — `mailbox.close` returns `std.DoublyLinkedList`, walk via `popFirst()`, free each item. Close returns a plain stdlib list — cleanup code is standard Zig
+60. **Batch processing** — worker blocks on first item, then drains backlog with `mailbox.receive_batch`; shows the receive + batch pattern
+61. **Fan-out** — multiple workers share one mailbox; each processes items until `error.Closed`; main closes to stop all workers
+62. **Shutdown via ShutdownCommand** — local `ShutdownCommand` PolyNode type sent as sentinel; worker exits on receipt; remaining Events counted
 
 ---
 
@@ -105,42 +108,42 @@ are intentionally excluded. Layers 1–3 must be fully testable without them.
 
 ### Tests
 
-60. **pool.new, pool.init, pool.destroy** — create pool, register hooks via `pool.init`, verify handle; close then destroy
-61. **pool.get creates new item via on_get** — empty pool, `.available_or_new` mode, on_get called with `m.* == null`, returns new item
-62. **pool.get reuses stored item** — put item back, get again, verify same pointer returned
-63. **on_get reinitializes recycled item** — put item with data, get it back, verify fields were reset by on_get
-64. **pool.put calls on_put** — verify on_put hook is invoked with correct in_pool_count
-65. **on_put can destroy item** — on_put sets `m.* = null` (destroy policy), verify item not stored
-66. **on_put can keep item** — on_put leaves `m.*` non-null (keep policy), verify item stored in pool
-67. **GetMode.new_only always creates** — even with items available, `.new_only` calls on_get with null
-68. **GetMode.available_only returns error.NotAvailable** — empty pool, `.available_only` mode, returns `error.NotAvailable`
-69. **GetMode.available_only returns stored item** — pool has item, `.available_only` returns it
-70. **Per-tag free lists** — pool stores Event and Sensor separately, `pool.get` with EVENT_TAG returns Event, not Sensor
-71. **pool.close calls on_close with all items** — put 5 items, `pool.close`, on_close receives `*std.DoublyLinkedList` with 5 items
-72. **pool.close is idempotent** — second close is no-op
-73. **pool.get on closed pool returns error.Closed** — close first, then get, verify error
-74. **pool.put on closed pool returns item to caller** — put after close, Slot stays non-null (caller still owns it)
-75. **Backpressure policy** — on_put drops items when count exceeds threshold
-76. **Pool seeding** — pre-allocate N items with `.new_only` + `pool.put`, verify N available with `.available_only`
-77. **in_pool_count accuracy** — track count across get/put cycles, verify on_get and on_put receive correct counts
-78. **Hooks run outside lock** — verify no deadlock when on_get/on_put call into pool (indirect test via successful operation)
-79. **pool.put_all** — return a batch of items via `*std.DoublyLinkedList`; callee pops from caller's list. Accepts a standard stdlib list — no conversion needed from `mailbox.receive_batch` or `mailbox.close` results
-80. **pool.get_wait timeout (non-null ?u64)** — `pool.get_wait` with `timeout_ns = 1000` on empty pool, verify `error.Timeout`
-81. **pool.get_wait forever (null ?u64)** — `pool.get_wait` with `timeout_ns = null` on pool that gets an item put from another context; verify item received
+63. **pool.new, pool.init, pool.destroy** — create pool, register hooks via `pool.init`, verify handle; close then destroy
+64. **pool.get creates new item via on_get** — empty pool, `.available_or_new` mode, on_get called with `m.* == null`, returns new item
+65. **pool.get reuses stored item** — put item back, get again, verify same pointer returned
+66. **on_get reinitializes recycled item** — put item with data, get it back, verify fields were reset by on_get
+67. **pool.put calls on_put** — verify on_put hook is invoked with correct in_pool_count
+68. **on_put can destroy item** — on_put sets `m.* = null` (destroy policy), verify item not stored
+69. **on_put can keep item** — on_put leaves `m.*` non-null (keep policy), verify item stored in pool
+70. **GetMode.new_only always creates** — even with items available, `.new_only` calls on_get with null
+71. **GetMode.available_only returns error.NotAvailable** — empty pool, `.available_only` mode, returns `error.NotAvailable`
+72. **GetMode.available_only returns stored item** — pool has item, `.available_only` returns it
+73. **Per-tag free lists** — pool stores Event and Sensor separately, `pool.get` with EVENT_TAG returns Event, not Sensor
+74. **pool.close calls on_close with all items** — put 5 items, `pool.close`, on_close receives `*std.DoublyLinkedList` with 5 items
+75. **pool.close is idempotent** — second close is no-op
+76. **pool.get on closed pool returns error.Closed** — close first, then get, verify error
+77. **pool.put on closed pool returns item to caller** — put after close, Slot stays non-null (caller still owns it)
+78. **Backpressure policy** — on_put drops items when count exceeds threshold
+79. **Pool seeding** — pre-allocate N items with `.new_only` + `pool.put`, verify N available with `.available_only`
+80. **in_pool_count accuracy** — track count across get/put cycles, verify on_get and on_put receive correct counts
+81. **Hooks run outside lock** — verify no deadlock when on_get/on_put call into pool (indirect test via successful operation)
+82. **pool.put_all** — return a batch of items via `*std.DoublyLinkedList`; callee pops from caller's list. Accepts a standard stdlib list — no conversion needed from `mailbox.receive_batch` or `mailbox.close` results
+83. **pool.get_wait timeout (non-null ?u64)** — `pool.get_wait` with `timeout_ns = 1000` on empty pool, verify `error.Timeout`
+84. **pool.get_wait forever (null ?u64)** — `pool.get_wait` with `timeout_ns = null` on pool that gets an item put from another context; verify item received
 
 ### Tests — Ownership State Transitions (Pool)
 
-82. **HELD → IN_FLIGHT (pool.get)** — item in pool free-list; `pool.get` transfers to caller; Slot non-null; item is IN_FLIGHT
-83. **IN_FLIGHT → HELD (pool.put, keep)** — item owned by caller; `pool.put` with on_put that keeps; item back in pool; Slot null
-84. **IN_FLIGHT → FREE (pool.put, destroy)** — item owned by caller; `pool.put` with on_put that destroys; item freed; Slot null
-85. **Double pool.put** — put same item twice without getting in between; expect panic or assertion failure
+85. **HELD → IN_FLIGHT (pool.get)** — item in pool free-list; `pool.get` transfers to caller; Slot non-null; item is IN_FLIGHT
+86. **IN_FLIGHT → HELD (pool.put, keep)** — item owned by caller; `pool.put` with on_put that keeps; item back in pool; Slot null
+87. **IN_FLIGHT → FREE (pool.put, destroy)** — item owned by caller; `pool.put` with on_put that destroys; item freed; Slot null
+88. **Double pool.put** — put same item twice without getting in between; expect panic or assertion failure
 
 ### Examples
 
-86. **Basic recycler** — create pool with hooks, `pool.get`/`pool.put`/`pool.get` roundtrip, verify reuse
-87. **Backpressure pool** — on_put caps pool at N items, excess destroyed
-88. **Pool seeding** — pre-populate pool, then use `.available_only` to consume without allocation
-89. **Pool teardown** — `pool.close`, on_close receives `*std.DoublyLinkedList`, walks via `popFirst()`, frees all items
+89. **Basic recycler** — create pool with hooks, `pool.get`/`pool.put`/`pool.get` roundtrip, verify reuse
+90. **Backpressure pool** — on_put caps pool at N items, excess destroyed
+91. **Pool seeding** — pre-populate pool, then use `.available_only` to consume without allocation
+92. **Pool teardown** — `pool.close`, on_close receives `*std.DoublyLinkedList`, walks via `popFirst()`, frees all items
 
 ---
 

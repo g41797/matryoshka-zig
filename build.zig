@@ -4,16 +4,24 @@ pub fn build(b: *std.Build) void {
     const target: std.Build.ResolvedTarget = b.standardTargetOptions(.{});
     const optimize: std.builtin.OptimizeMode = b.standardOptimizeOption(.{});
 
+    const use_lld = target.result.os.tag != .macos and
+        target.result.os.tag != .freebsd and
+        target.result.os.tag != .openbsd and
+        target.result.os.tag != .netbsd;
+
     const mod: *std.Build.Module = b.addModule("matryoshka", .{
         .root_source_file = b.path("src/matryoshka.zig"),
         .target = target,
         .optimize = optimize,
+        .single_threaded = false,
     });
 
     const lib: *std.Build.Step.Compile = b.addLibrary(.{
         .name = "matryoshka",
         .linkage = .static,
         .root_module = mod,
+        .use_llvm = true,
+        .use_lld = use_lld,
     });
 
     b.installArtifact(lib);
@@ -32,7 +40,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const emod: *std.Build.Module = b.createModule(.{
+    const emod: *std.Build.Module = b.addModule("examples", .{
         .root_source_file = b.path("examples/examples.zig"),
         .target = target,
         .optimize = optimize,
@@ -47,6 +55,8 @@ pub fn build(b: *std.Build) void {
 
     const lib_unit_tests: *std.Build.Step.Compile = b.addTest(.{
         .root_module = tmod,
+        .use_llvm = true,
+        .use_lld = use_lld,
     });
 
     b.installArtifact(lib_unit_tests);
