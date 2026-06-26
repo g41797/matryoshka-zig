@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 g41797
+// SPDX-License-Identifier: MIT
+
 pub const Message = struct {
     poly: polynode.PolyNode = .{},
     text: []const u8 = "",

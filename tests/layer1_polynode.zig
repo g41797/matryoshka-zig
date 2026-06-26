@@ -203,7 +203,6 @@ const Sensor = types.Sensor;
 const EventPolyHelper = types.EventPolyHelper;
 const SensorPolyHelper = types.SensorPolyHelper;
 
-
 const polynode = @import("matryoshka").polynode;
 const PolyNode = polynode.PolyNode;
 const Slot = polynode.Slot;

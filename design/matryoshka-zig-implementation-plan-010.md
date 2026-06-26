@@ -1,4 +1,4 @@
-# Matryoshka Zig 0.16 — Staged Implementation Plan (009)
+# Matryoshka Zig 0.16 — Staged Implementation Plan (010)
 
 Plan document only. No code here.
 The specs are already written. This document tells the implementer how to
@@ -55,7 +55,7 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 - `matryoshka-api-reference-010.md` — **primary source of truth**: signatures, types, error sets, cancel contract, PolyHelper, invariants, thread-safety, complexity, io.concurrent and Io.Group verified call syntax. Wins over all other sources on any conflict.
 - `matryoshka-architecture-001.md` — why, concepts, flows
 - `matryoshka-architecture-foundation-4-001.md` — language-independent architecture
-- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-008.md` before use.
+- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-010.md` before use.
 - `collected-context-002.md` — master reference, proposals, decisions
 - `task1-scenarios-001.md` — 92 scenarios (Layers 1-3) — historical source
 - `task2-scenarios-001.md` — 61 scenarios (Layer 4+) — historical source
@@ -137,7 +137,7 @@ These rules are writen in blood. Follow them
 - `design/context.md` is the stable entry point — always points to the latest `collected-context-NNN.md`.
 
 ### Plan Versioning (MUST)
-- After each completed stage, create a new plan version (e.g., plan-006 → plan-007).
+- After each completed stage, create a new plan version (e.g., plan-009 → plan-010).
 - In the new version, collapse completed stages to a one-line summary: "Stage N — Name. DONE. See Session X."
 - Keep active + future stages in full detail.
 - Old plan versions stay as historical record. Do not delete them.
@@ -242,17 +242,19 @@ matryoshka-zig/
 │   ├── layer2_examples.zig   # Layer 2 example test wrappers (53-62)
 │   ├── layer3_pool.zig       # Layer 3 test scenarios
 │   ├── layer3_examples.zig   # Layer 3 example test wrappers
-│   ├── layer4_master.zig     # Layer 4 test scenarios
-│   └── crosslayer.zig        # cross-layer test scenarios
+│   ├── layer4_infra.zig      # Layer 4 infra-as-items test scenarios (18-20, 93-94)
+│   ├── layer4_master.zig     # Layer 4 master test scenarios (1-2)
+│   ├── layer4_examples.zig   # Layer 4 example test wrappers (17-24, 95-96)
+│   └── crosslayer.zig        # cross-layer test scenarios (future)
 ├── helpers/
-│   ├── helpers.zig           # expect, clearList, freeItem, freeList
-│   └── types.zig             # Event, Sensor structs + PolyHelper instances
+│   ├── helpers.zig           # expect, clearList, freeItem, freeList, AlwaysCreateCtx, CappedPoolCtx
+│   └── types.zig             # Event, Sensor, ShutdownCommand, Timer + PolyHelper instances
 ├── examples/                 # runnable usage stories, imported by test wrappers
 │   ├── examples.zig          # root: re-exports per-layer example modules
 │   ├── layer1/               # polynode usage stories (scenarios 21-25)
 │   ├── layer2/               # mailbox usage stories (scenarios 53-62)
-│   ├── layer3/               # pool usage stories
-│   └── layer4/               # composition, master, cross-layer stories
+│   ├── layer3/               # pool usage stories (scenarios 89-92)
+│   └── layer4/               # composition, master, cross-layer stories (17-24, 95-96)
 ├── kitchen/
 │   ├── build_and_test_debug.sh   # build + test Debug only
 │   ├── build_and_test_all.sh     # build + test all 4 optimization modes
@@ -304,27 +306,16 @@ Stage 9     Docs + README + autodocs
 ### Stage 2.5 — Pre-Stage-3 fixes. DONE. See Session 7 (2026-06-26).
 ### Stage 3 — Layer 3: Pool (impl + tests + examples). DONE. See Session 8 (2026-06-26).
 ### Stage 4.a — Infra as Items: tests (scenarios 18-20, 93-94). DONE. See Session 8 (2026-06-26).
-### Stage 4.b — Infra as Items: docs + examples (scenarios 95-96). DONE. See Session 9 (2026-06-26).
+### Stage 4.b — Infra as Items: examples (scenarios 95-96). DONE. See Session 9 (2026-06-26).
+### Stage 5.a — Master: tests (task2 scenarios 1-2). DONE. See Session 10 (2026-06-26).
+### Stage 5.b — Master: examples (task2 scenarios 17-24). DONE. See Session 11 (2026-06-26).
 
-**Key insight (Session 9)**: Tag identifies class, not instance or role. Infra handles have no user-visible fields. Instance identity uses pointer comparison; role uses protocol. Documented in `matryoshka-api-reference-009.md` § "Tag identity — class, not instance". Worker-finish-signal pattern: master gives worker its mailbox; worker returns it (unclosed) as finish signal; master identifies by pointer comparison, closes+destroys, joins thread.
-
----
-
-### Stage 5 — Layer 4: Master (composition)
-
-**Purpose**: compose blocks into a coordinator. No cancellation yet.
-
-**What to build** (api-reference-007.md Master section)
-- Master is a role, not a type. Examples, not a `Master` struct in `src/`.
-- Worker spawned via `io.async` / `io.concurrent`, joined via `Future.await`.
-- `Io.Group` for multiple workers, `group.await`.
-- Single-source and fan-in patterns. Timer-as-mailbox-item (no Select).
-
-**Scenarios to verify**: task2-scenarios-001.md Stage 5 rows.
-
-**Checkpoint**
-- All Stage 5 test scenarios pass.
-- `error.Canceled` paths NOT yet required (Stage 6).
+**Key findings (Sessions 9-11)**:
+- Tag identifies class, not instance or role. Infra handles have no user-visible fields. Instance identity: pointer comparison. Role: protocol between sender and receiver. Documented in `matryoshka-api-reference-010.md` § "Tag identity".
+- `group.concurrent` worker must return exactly `error{Canceled}!void`. Non-Canceled errors caught inside.
+- `Io.Threaded.init` returns `Io.Threaded` directly — no `try`.
+- `mailbox.receive` returns `error.Closed` immediately on closed mailbox, even if items remain in queue. "Close as signal" only works after all items consumed. Use ShutdownCommand sentinel for pipelines.
+- `helpers.freeItem` now handles all 4 types: Event, Sensor, Timer, ShutdownCommand.
 
 ---
 
@@ -332,14 +323,17 @@ Stage 9     Docs + README + autodocs
 
 **Purpose**: the Zig-new behavior. Cancel vs close, clean teardown.
 
-**What to build** (api-reference-007.md cancel contract)
+**What to build** (api-reference-010.md cancel contract)
 - `Future.cancel`, `group.cancel` shutdown paths.
 - Broadcast path vs Future.cancel path.
 - Verify cancel-protected ops never leak items.
 
+**Scenarios**: task2 scenarios 3-16.
+
 **Checkpoint**
-- `error.Canceled != error.Closed` proven.
+- `error.Canceled != error.Closed` proven in tests.
 - No item lost on cancel during `pool.put`.
+- All kitchen scripts pass.
 
 ---
 
@@ -347,16 +341,19 @@ Stage 9     Docs + README + autodocs
 
 **Purpose**: bridge blocking mailbox/pool into `Io.Select` and `Io.Future`.
 
-**What to build** (api-reference-007.md event source helpers)
+**What to build** (api-reference-010.md event source helpers)
 - `mailbox.ReceiveResult`, `mailbox.receive_future`.
 - `pool.PoolResult`, `pool.get_wait_future`.
 - Result by value inside the union — no `*Slot` crosses threads.
 - Cancel returns `.canceled`; never closes.
 - `error.ConcurrencyUnavailable` on single-threaded backends.
 
+**Scenarios**: task2 scenarios 25-31, 42-56.
+
 **Checkpoint**
 - Single-threaded returns `error.ConcurrencyUnavailable`.
 - Cancel/close separation proven.
+- All kitchen scripts pass.
 
 ---
 
@@ -364,9 +361,12 @@ Stage 9     Docs + README + autodocs
 
 **Purpose**: prove Pool + Io is a complete coordination model without Mailbox.
 
+**Scenarios**: task2 scenarios 32-41, 57-61.
+
 **Checkpoint**
 - All Stage 8 test scenarios pass.
 - All 153 scenarios green (tests + examples).
+- All kitchen scripts pass.
 
 ---
 
@@ -405,4 +405,3 @@ Totals: 94 task1 (Stages 1-4), 61 task2 (Stages 5-8).
 | collected-context-002.md | Master reference. Paths, 27 proposals, decisions, open items, scenario counts. Read first. |
 | matryoshka-api-reference-010.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper, tag identity (class vs instance), infra transport patterns, io.concurrent and Io.Group verified call syntax. Wins over all other sources. |
 | matryoshka-zig-0.16-implementation-guide-001.md | **OLD — verify all details against API reference before use.** Zig how-to patterns: struct layout, condition_waitTimeout, cancel mechanics, Odin→Zig appendix. |
-| matryoshka-architecture-001.md | Architecture introduction. Why matryoshka exists, concept progression, flows, layer map. MkDocs source. |

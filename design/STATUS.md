@@ -31,7 +31,7 @@
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-zig-implementation-plan-009.md
+- Plan: matryoshka-zig-implementation-plan-010.md
 
 ## Participants
 - Owner(g41797-human): design, decision-making
@@ -91,10 +91,65 @@ Stage 2.b — Mailbox examples. DONE.
 Stage 2.5 — Pre-Stage-3 fixes. DONE.
 Stage 3 — Pool (impl + tests + examples). DONE.
 Stage 4 — DONE (97/97 tests).
-Current: Stage 5.a — DONE (99/99 tests).
-Next: Stage 5.b — Master examples. Show intent first.
+Stage 5.a — DONE (99/99 tests).
+Stage 5.b — DONE (107/107 tests).
+Current: Stage 5 complete. Plan version 010 created.
+Next: Stage 6 — Cancellation + Shutdown. Show intent first.
 
 ## Session Log
+
+### 2026-06-26 — Session 11
+**Participants**: human + Claude
+
+**Summary**
+Stage 5.b (Master examples — scenarios 17–24) completed.
+
+8 new example files added under `examples/layer4/`, covering:
+- Scenario 17 (minimal_master): `io.concurrent` + `mailbox.close` → stdlib list walk + `fut.await`
+- Scenario 18 (master_with_pool): pool-backed recycler + `fut.cancel` for shutdown
+- Scenario 19 (multi_worker_master): `Io.Group` + shared mailbox + `mailbox.close` → `group.await`
+- Scenario 20 (pipeline_masters): 3 chained workers; ShutdownCommand sentinel propagates downstream
+- Scenario 21 (request_response): two workers; bidirectional Event↔Sensor ownership transfer
+- Scenario 22 (timer_via_mailbox): timer task + data events → one mailbox; tag dispatch; fixed-count worker
+- Scenario 23 (oob_signal): `mailbox.send_oob` queue-front ordering; sequential demo, no concurrency needed
+- Scenario 24 (multi_source_mailbox): 3 concurrent senders (timer, events, signal) → one mailbox; close-based shutdown
+
+Key findings during coding:
+- `mailbox.receive` returns `error.Closed` immediately when mailbox is closed, even if items remain in queue. "Close as signal" only works if items are fully consumed before close — otherwise use ShutdownCommand sentinel.
+- For fixed-count workers (receive exactly N items): safe when N is known and all N will arrive. For unknown count: use close-based loop (`catch return`).
+- `helpers.freeItem` extended to handle `Timer` and `ShutdownCommand` (both were absent). `freeList` now correctly frees all four types.
+- `Timer` struct + `TimerPolyHelper` added to `helpers/types.zig`.
+- AI-sh scan hit: "undelivered" in `minimal_master.zig:39` (substring match on "deliver"). Natural technical vocabulary, not AI-speak. Owner to decide.
+
+**Changes**
+- `helpers/types.zig` — added `Timer` struct + `TimerPolyHelper`
+- `helpers/helpers.zig` — `freeItem` extended: handles `Timer` and `ShutdownCommand`
+- `examples/layer4/minimal_master.zig` — scenario 17
+- `examples/layer4/master_with_pool.zig` — scenario 18
+- `examples/layer4/multi_worker_master.zig` — scenario 19
+- `examples/layer4/pipeline_masters.zig` — scenario 20
+- `examples/layer4/request_response.zig` — scenario 21
+- `examples/layer4/timer_via_mailbox.zig` — scenario 22
+- `examples/layer4/oob_signal.zig` — scenario 23
+- `examples/layer4/multi_source_mailbox.zig` — scenario 24
+- `examples/layer4/layer4.zig` — added 8 new imports
+- `tests/layer4_examples.zig` — added 8 test wrappers (tests 17–24); wrappers 17–24 use `Io.Threaded.init`; wrappers 95–96 keep `global_single_threaded`
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `kitchen/build_and_test_debug.sh` | pass (107/107 tests) |
+| `kitchen/build_and_test_all.sh` | pass (107/107 tests, all 4 modes) |
+| `kitchen/build_cross_debug.sh` | pass (mac x86_64, mac aarch64, windows x86_64) |
+| Post-stage cleanup | nothing to clean — no repeated code, no wrong comments found |
+| AI-sh + banned words scan | 1 hit: "undelivered" in minimal_master.zig:39 — natural technical vocabulary, owner to decide |
+| Plan version 010 | created `design/matryoshka-zig-implementation-plan-010.md` |
+| context.md | plan reference → 010; examples count 21 → 29 |
+| STATUS.md | plan reference → 010; stages line updated |
+| README.md | no sync needed (still WIP) |
+
+**Next**: Stage 6 — Cancellation + Shutdown. Show intent first.
 
 ### 2026-06-26 — Session 10
 **Participants**: human + Claude

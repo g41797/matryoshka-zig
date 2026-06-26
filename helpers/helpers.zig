@@ -16,6 +16,10 @@ pub fn freeItem(poly: *polynode.PolyNode, alloc: std.mem.Allocator) void {
         alloc.destroy(ev);
     } else if (types.SensorPolyHelper.cast(poly)) |sn| {
         alloc.destroy(sn);
+    } else if (types.TimerPolyHelper.cast(poly)) |tm| {
+        alloc.destroy(tm);
+    } else if (types.ShutdownCommandPolyHelper.cast(poly)) |sc| {
+        alloc.destroy(sc);
     }
 }
 

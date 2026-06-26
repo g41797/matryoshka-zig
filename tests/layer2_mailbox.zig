@@ -863,7 +863,6 @@ test "52 - combined (3+2+main): fan-in + fan-out, close after 100ms" {
     try testing.expectEqual(total_sent, total_received + remaining_count);
 }
 
-
 // --- OOB counter invariant: oob_last resets after last OOB is received ---
 // Scenario: send regular B, send_oob A, receive A, send_oob C.
 // After receiving A, oob_count must reach 0 and oob_last must clear.
@@ -886,7 +885,7 @@ test "oob last resets after last oob received, next send_oob goes to front" {
     EventPolyHelper.init(&ev_a);
     var sb: Slot = &ev_b.poly;
     var sa: Slot = &ev_a.poly;
-    try mailbox.send(mbh, &sb);      // queue=[B], oob_count=0
+    try mailbox.send(mbh, &sb); // queue=[B], oob_count=0
     try mailbox.send_oob(mbh, &sa); // queue=[A,B], oob_count=1, oob_last=&A
 
     var out: Slot = null;

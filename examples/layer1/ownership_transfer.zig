@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 g41797
+// SPDX-License-Identifier: MIT
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     _ = io;
 

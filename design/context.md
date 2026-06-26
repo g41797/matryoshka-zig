@@ -11,11 +11,11 @@ Architecture: [matryoshka-architecture-001.md](matryoshka-architecture-001.md) �
 
 Latest context: [collected-context-002.md](collected-context-002.md)
 
-Rules and plan: [matryoshka-zig-implementation-plan-009.md](matryoshka-zig-implementation-plan-009.md) — Section 0 (Sources), Section 1 (Process Rules + Build Order Rules), stages
+Rules and plan: [matryoshka-zig-implementation-plan-010.md](matryoshka-zig-implementation-plan-010.md) — Section 0 (Sources), Section 1 (Process Rules + Build Order Rules), stages
 
 Tests (Layers 1-3): [task1-tests-001.md](task1-tests-001.md) — 62 scenarios, correctness/edge cases/contract violations
 
-Examples (Layers 1-4): [task1-examples-001.md](task1-examples-001.md) — 21 scenarios (Layer1: 21-25, Layer2: 53-62, Layer3: 89-92, Layer4: 95-96), usage patterns/stories
+Examples (Layers 1-4): [task1-examples-001.md](task1-examples-001.md) — 29 scenarios (Layer1: 21-25, Layer2: 53-62, Layer3: 89-92, Layer4: 17-24, 95-96), usage patterns/stories
 
 Tests (Layer 4 + cross-layer): [task2-tests-001.md](task2-tests-001.md) — 23 scenarios, worker lifecycle/shutdown/cancellation/cross-layer
 

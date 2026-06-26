@@ -1,2 +1,10 @@
 pub const mailbox_as_item = @import("mailbox_as_item.zig");
-pub const pool_as_item    = @import("pool_as_item.zig");
+pub const pool_as_item = @import("pool_as_item.zig");
+pub const minimal_master = @import("minimal_master.zig");
+pub const master_with_pool = @import("master_with_pool.zig");
+pub const multi_worker_master = @import("multi_worker_master.zig");
+pub const pipeline_masters = @import("pipeline_masters.zig");
+pub const request_response = @import("request_response.zig");
+pub const timer_via_mailbox = @import("timer_via_mailbox.zig");
+pub const oob_signal = @import("oob_signal.zig");
+pub const multi_source_mailbox = @import("multi_source_mailbox.zig");

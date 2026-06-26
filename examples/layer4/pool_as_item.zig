@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 g41797
+// SPDX-License-Identifier: MIT
+
 const CarrierCtx = struct {
     alloc: std.mem.Allocator,
     closed_count: usize = 0,
@@ -47,9 +50,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     // Tag dispatch is not needed here: all items are PoolHandles by construction.
     pool.close(carrier);
 
-    try helpers.expect(error.PoolAsItemFailed,
-        carrier_ctx.closed_count == n,
-        "wrong number of inner pools cleaned up");
+    try helpers.expect(error.PoolAsItemFailed, carrier_ctx.closed_count == n, "wrong number of inner pools cleaned up");
 
     std.log.info("carrier closed: {d} inner pool(s) cleaned up", .{carrier_ctx.closed_count});
 

@@ -12,8 +12,13 @@ pub const ShutdownCommand = struct {
     poly: polynode.PolyNode = .{},
 };
 
+pub const Timer = struct {
+    poly: polynode.PolyNode = .{},
+};
+
 pub const EventPolyHelper = polynode.PolyHelper(Event);
 pub const SensorPolyHelper = polynode.PolyHelper(Sensor);
 pub const ShutdownCommandPolyHelper = polynode.PolyHelper(ShutdownCommand);
+pub const TimerPolyHelper = polynode.PolyHelper(Timer);
 
 const polynode = @import("matryoshka").polynode;

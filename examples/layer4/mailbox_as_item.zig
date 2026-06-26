@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 g41797
+// SPDX-License-Identifier: MIT
+
 const WorkerCtx = struct {
     master_inbox: MailboxHandle,
     worker_mbh: MailboxHandle,
@@ -72,14 +75,10 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     try mailbox.receive(master_inbox, &received, null);
 
     // Tag check: confirms it is a mailbox.
-    try helpers.expect(error.WorkerFinishFailed,
-        mailbox.is_it_you(received.?.*.tag),
-        "expected a MailboxHandle");
+    try helpers.expect(error.WorkerFinishFailed, mailbox.is_it_you(received.?.*.tag), "expected a MailboxHandle");
 
     // Pointer check: confirms it is the worker's mailbox specifically.
-    try helpers.expect(error.WorkerFinishFailed,
-        received.? == worker_mbh,
-        "wrong mailbox returned");
+    try helpers.expect(error.WorkerFinishFailed, received.? == worker_mbh, "wrong mailbox returned");
 
     std.log.info("master: received worker_mbh back — worker finished (processed={d})", .{ctx.processed});
 

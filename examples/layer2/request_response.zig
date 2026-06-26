@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 g41797
+// SPDX-License-Identifier: MIT
+
 const WorkerCtx = struct {
     req_mbh: MailboxHandle,
     resp_mbh: MailboxHandle,

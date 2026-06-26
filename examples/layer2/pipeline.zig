@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 g41797
+// SPDX-License-Identifier: MIT
+
 // Terminator sentinel: Event with code == -1 signals stage exit.
 
 const ProducerCtx = struct {

@@ -96,8 +96,8 @@ pub fn get(ph: PoolHandle, tag: *const anyopaque, mode: GetMode, m: *polynode.Sl
 
     return switch (mode) {
         .available_or_new => _get_available_or_new(p, tag, m),
-        .new_only         => _get_new_only(p, tag, m),
-        .available_only   => _get_available_only(p, tag, m),
+        .new_only => _get_new_only(p, tag, m),
+        .available_only => _get_available_only(p, tag, m),
     };
 }
 
@@ -134,7 +134,7 @@ pub fn get_wait(ph: PoolHandle, tag: *const anyopaque, m: *polynode.Slot, timeou
         }
 
         cond_timeout.condition_waitTimeout(&p.*.cond, io, &p.*.mutex, deadline) catch |err| switch (err) {
-            error.Timeout  => return error.Timeout,
+            error.Timeout => return error.Timeout,
             error.Canceled => return err,
         };
     }
