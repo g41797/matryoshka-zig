@@ -52,10 +52,10 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 
 ### Design docs — `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/`
 
-- `matryoshka-api-reference-011.md` — **primary source of truth**: signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, io.concurrent and Io.Group verified call syntax. Wins over all other sources on any conflict.
+- `matryoshka-api-reference-012.md` — **primary source of truth**: signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, io.concurrent and Io.Group verified call syntax. Wins over all other sources on any conflict.
 - `matryoshka-architecture-001.md` — why, concepts, flows
 - `matryoshka-architecture-foundation-4-001.md` — language-independent architecture
-- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-011.md` before use.
+- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-012.md` before use.
 - `collected-context-003.md` — master reference, proposals, decisions
 - `task1-scenarios-001.md` — 92 scenarios (Layers 1-3) — historical source
 - `task2-scenarios-001.md` — 61 scenarios (Layer 4+) — historical source
@@ -215,7 +215,7 @@ These rules are writen in blood. Follow them
 - Staccato rhythm.
 - No AI-sh words. After any stage that changes `*.md` or `*.zig`, scan for:
   robust, seamlessly, comprehensive, leverage, efficient, powerful, facilitate,
-  utilize, ensure, performant, ergonomic, idiomatic, streamline, orchestrate,
+  utilize, ensure, performant, ergonomic, idiomatic, streamline, orchestrate,fires,
   sophisticated, intuitive, scalable, unlock, empower, harness, deliver, drain, fed, arm, leg, idempotent.
 - Show the list to the owner. Do not fix without approval.
 - When appending to a doc, match the heading levels already in use.
@@ -288,7 +288,7 @@ Stage 9     Docs + README + autodocs
 ### Stage 5.b — Master: examples (task2 scenarios 17-24). DONE. See Session 11 (2026-06-26).
 
 **Key findings (Sessions 9-11)**:
-- Tag identifies class, not instance or role. Infra handles have no user-visible fields. Instance identity: pointer comparison. Role: protocol between sender and receiver. Documented in `matryoshka-api-reference-011.md` § "Tag identity".
+- Tag identifies class, not instance or role. Infra handles have no user-visible fields. Instance identity: pointer comparison. Role: protocol between sender and receiver. Documented in `matryoshka-api-reference-012.md` § "Tag identity".
 - `group.concurrent` worker must return exactly `error{Canceled}!void`. Non-Canceled errors caught inside.
 - `Io.Threaded.init` returns `Io.Threaded` directly — no `try`.
 - `mailbox.receive` returns `error.Closed` immediately on closed mailbox, even if items remain in queue. "Close as signal" only works after all items consumed. Use ShutdownCommand sentinel for pipelines.
@@ -297,7 +297,7 @@ Stage 9     Docs + README + autodocs
 ---
 
 ### INTR 1.a — collected-context-003.md. DONE. See Session 12 (2026-06-27).
-### INTR 1.b — matryoshka-api-reference-011.md (Opus). DONE. See Session 12 (2026-06-27).
+### INTR 1.b — matryoshka-api-reference-012.md (Opus). DONE. See Session 12 (2026-06-27).
 ### INTR 1.c — Code retrofit + rename (layer3 + src + helpers). DONE. See Session 12 (2026-06-27).
 
 INTR 1.c changes:
@@ -308,7 +308,7 @@ INTR 1.c changes:
 - `examples/layer3/capped_pool.zig` — verified (owner-applied defer-early).
 - `examples/layer3/pool_seeding.zig` — `m` → `slot`, defer-early.
 - `examples/layer3/pool_teardown.zig` — `m` → `slot`, defer-early.
-- `design/matryoshka-api-reference-011.md` — `m` → `slot` throughout.
+- `design/matryoshka-api-reference-012.md` — `m` → `slot` throughout.
 - All 107 tests pass. All 3 kitchen scripts pass.
 
 ---
@@ -401,5 +401,5 @@ Totals: 94 task1 (Stages 1-4), 61 task2 (Stages 5-8).
 | Doc | Owns |
 |-----|------|
 | collected-context-003.md | Master reference. Paths, proposals, decisions, open items, Stages 0-5 + INTR 1 summary. |
-| matryoshka-api-reference-011.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, thread-safety, complexity. Wins over all other sources. |
+| matryoshka-api-reference-012.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, thread-safety, complexity. Wins over all other sources. |
 | matryoshka-zig-0.16-implementation-guide-001.md | **OLD — verify all details against API reference before use.** Zig how-to patterns: struct layout, condition_waitTimeout, cancel mechanics, Odin→Zig appendix. |

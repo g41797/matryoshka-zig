@@ -1,4 +1,4 @@
-# Matryoshka Zig 0.16 — Staged Implementation Plan (011)
+# Matryoshka Zig 0.16 — Staged Implementation Plan (013)
 
 Plan document only. No code here.
 The specs are already written. This document tells the implementer how to
@@ -52,10 +52,10 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 
 ### Design docs — `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/`
 
-- `matryoshka-api-reference-011.md` — **primary source of truth**: signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, io.concurrent and Io.Group verified call syntax. Wins over all other sources on any conflict.
+- `matryoshka-api-reference-012.md` — **primary source of truth**: signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, io.concurrent and Io.Group verified call syntax. Wins over all other sources on any conflict.
 - `matryoshka-architecture-001.md` — why, concepts, flows
 - `matryoshka-architecture-foundation-4-001.md` — language-independent architecture
-- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-011.md` before use.
+- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-012.md` before use.
 - `collected-context-003.md` — master reference, proposals, decisions
 - `task1-scenarios-001.md` — 92 scenarios (Layers 1-3) — historical source
 - `task2-scenarios-001.md` — 61 scenarios (Layer 4+) — historical source
@@ -169,7 +169,7 @@ These rules are writen in blood. Follow them
 - Each fix in a multi-fix plan needs its own approval.
 
 ### Implementation (MUST)
-- Source of truth for signatures, types, errors: `matryoshka-api-reference-011.md`. Wins over all other sources.
+- Source of truth for signatures, types, errors: `matryoshka-api-reference-012.md`. Wins over all other sources.
 - Implementation guide (`matryoshka-zig-0.16-implementation-guide-001.md`) is OLD — verify every detail against the API reference before use.
 - Source of truth for architecture: `matryoshka-architecture-foundation-4-001.md`.
 - Architecture introduction (why, concepts, flows): `matryoshka-architecture-001.md`.
@@ -183,6 +183,7 @@ These rules are writen in blood. Follow them
   for both `_Mailbox` and `_Pool` (Zig has no native `Io.Condition.waitTimeout`,
   issue codeberg/zig#31278).
 - Architectural changes need explicit owner approval before implementation.
+- Never use `allocator.create` / `allocator.destroy` directly on PolyNode-based user types (Event, Sensor, Timer, ShutdownCommand) in examples or tests. Use `PolyHelper.create`, `PolyHelper.destroy`, or `helpers.freeSlot`. Exempt: infrastructure internals, hook bodies, non-PolyNode structs. See `matryoshka-api-reference-012.md § Cooperative cleanup patterns`.
 
 ### Slot Rule (MUST)
 - Never overwrite a non-null slot.
@@ -215,7 +216,7 @@ These rules are writen in blood. Follow them
 - No AI-sh words. After any stage that changes `*.md` or `*.zig`, scan for:
   robust, seamlessly, comprehensive, leverage, efficient, powerful, facilitate,
   utilize, ensure, performant, ergonomic, idiomatic, streamline, orchestrate,
-  sophisticated, intuitive, scalable, unlock, empower, harness, deliver, drain, fed, arm, leg, idempotent.
+  sophisticated, intuitive, scalable, unlock, empower, harness, deliver, drain, fed, arm, leg, idempotent, fires, faces.
 - Show the list to the owner. Do not fix without approval.
 - When appending to a doc, match the heading levels already in use.
 
@@ -230,6 +231,18 @@ These rules are writen in blood. Follow them
 8. Sync `README.md` and any per-module README touched.
 9. Comments check. AI-sh scan. Report to owner.
 10. Rethink the next stage before starting it.
+
+### Prologue for every stage(MUST)
+
+Before start of every stage ask owner whether he wants audit.
+For 'yes' or similar answer:
+
+- read design/STATUS.md and design/context.md
+- read matryoshka-api-reference-012.md
+- then audit all .zig files in examples/ and tests/ for violations of rules
+- List every file and line, do not fix anything
+
+Ask owner how to proceed.
 
 ---
 
@@ -269,128 +282,18 @@ Stage 9     Docs + README + autodocs
 ### Stage 2.b — Mailbox examples. DONE. See Session 6 (2026-06-26).
 ### Stage 2.5 — Pre-Stage-3 fixes. DONE. See Session 7 (2026-06-26).
 ### Stage 3 — Layer 3: Pool (impl + tests + examples). DONE. See Session 8 (2026-06-26).
-### Stage 4.a — Infra as Items: tests (scenarios 18-20, 93-94). DONE. See Session 8 (2026-06-26).
-### Stage 4.b — Infra as Items: examples (scenarios 95-96). DONE. See Session 9 (2026-06-26).
+### Stage 4.a — Infra as Items: tests. DONE. See Session 8 (2026-06-26).
+### Stage 4.b — Infra as Items: examples. DONE. See Session 9 (2026-06-26).
 ### Stage 5.a — Master: tests (task2 scenarios 1-2). DONE. See Session 10 (2026-06-26).
 ### Stage 5.b — Master: examples (task2 scenarios 17-24). DONE. See Session 11 (2026-06-26).
+### INTR 1 — Slot-based programming retrofit. DONE. See Sessions 12-13 (2026-06-27). Plan version 012 created.
+### Stage 6 — Cancellation + Shutdown (task2 scenarios 3-16). DONE. See Session 16 (2026-06-27). 121/121 tests.
 
-**Key findings (Sessions 9-11)**:
-- Tag identifies class, not instance or role. Infra handles have no user-visible fields. Instance identity: pointer comparison. Role: protocol between sender and receiver. Documented in `matryoshka-api-reference-011.md` § "Tag identity".
-- `group.concurrent` worker must return exactly `error{Canceled}!void`. Non-Canceled errors caught inside.
-- `Io.Threaded.init` returns `Io.Threaded` directly — no `try`.
-- `mailbox.receive` returns `error.Closed` immediately on closed mailbox, even if items remain in queue. "Close as signal" only works after all items consumed. Use ShutdownCommand sentinel for pipelines.
-- `helpers.freeItem` now handles all 4 types: Event, Sensor, Timer, ShutdownCommand.
-
----
-
-### INTR 1.a — collected-context-003.md. DONE. See Session 12 (2026-06-27).
-### INTR 1.b — matryoshka-api-reference-011.md (Opus). DONE. See Session 12 (2026-06-27).
-### INTR 1.c — Code retrofit + rename (layer3 + src + helpers). DONE. See Session 12 (2026-06-27).
-
-INTR 1.c changes:
-- `src/mailbox.zig` — `m` → `slot` in all public function signatures and bodies.
-- `src/pool.zig` — `m` → `slot` throughout. `pool.put` null-safe (no-op when `slot.* == null`).
-- `helpers/helpers.zig` — `createByTag` completed. `destroyByTag` added. Hook ctx m→slot.
-- `examples/layer3/basic_recycler.zig` — `m` → `slot`, defer-early.
-- `examples/layer3/capped_pool.zig` — verified (owner-applied defer-early).
-- `examples/layer3/pool_seeding.zig` — `m` → `slot`, defer-early.
-- `examples/layer3/pool_teardown.zig` — `m` → `slot`, defer-early.
-- `design/matryoshka-api-reference-011.md` — `m` → `slot` throughout.
-- All 107 tests pass. All 3 kitchen scripts pass.
-
----
-
-### INTR 1.d — Slot pattern completion: layer2 + layer4 examples
-
-**Goal**: apply slot-based programming patterns consistently across all layers.
-INTR 1.c only covered layer3. Audit of layer2 and layer4 revealed gaps.
-
-**Layer 1 — 1 file**:
-- `ownership_transfer.zig` — currently uses `var slot: polynode.Slot = &ev.*.poly` (non-null start, manual alloc+init). Has `errdefer allocator.destroy(ev)` set before `list.append`, which creates a dangling-node risk if a subsequent `helpers.expect` returns error while ev's node is in the list. Switch to `PolyHelper.create/destroy`: `var slot: Slot = null; defer types.EventPolyHelper.destroy(allocator, &slot); try types.EventPolyHelper.create(allocator, &slot)`. Removes the errdefer/list conflict and demonstrates the new idiom. The example still shows slot assignment, transfer, and recovery — the teaching value is preserved.
-- `define_type.zig`, `tag_dispatch.zig`, `produce_consume.zig`, `builder.zig` — no acquire operations, no Slot variables, no changes needed.
-
-**Layer 2 — 5 files**:
-- `simple_send_receive.zig` — rename `out` → `slot`; add `defer if (slot) |p| helpers.freeItem(p, allocator)` before each receive; add `errdefer allocator.destroy(x)` on 2 sender allocations; remove manual destroys (defer handles them).
-- `worker_loop.zig` — rename `out` → `slot`; add `defer if (slot) |p| helpers.freeItem(p, ctx.alloc)` before receive; add `slot = null` after each per-type destroy in dispatch.
-- `request_response.zig` — rename `out` → `slot` in workerFn and main; add defer-early in both receive sites.
-- `fan_out.zig` — rename `out` → `slot`; add `defer if (slot) |p| helpers.freeItem(p, ctx.alloc)` before receive; remove manual `helpers.freeItem` (defer handles it).
-- `shutdown_exit.zig` — rename `out` → `slot`; add defer-early; add `slot = null` after each per-type destroy in dispatch.
-
-**Layer 4 — 8 files**:
-- `minimal_master.zig` — add `defer if (slot) |p| helpers.freeItem(p, ctx.alloc)` before receive; remove manual `helpers.freeItem`.
-- `master_with_pool.zig` — workerFn: add `defer pool.put(ctx.ph, &slot)` before receive; remove manual `pool.put`. Seed loop: **bug fix** — add `defer pool.put(ph, &slot)` before `pool.get`; remove nothing (send clears slot, defer is no-op on success).
-- `multi_worker_master.zig` — add `defer if (slot) |p| helpers.freeItem(p, ctx.alloc)` before receive; remove manual `helpers.freeItem`.
-- `pipeline_masters.zig` — transformerFn: add defer-early; add `slot = null` after `alloc.destroy(ev)` in Event branch (prevents defer firing on freed pointer); add `slot = null` after forward in ShutdownCommand branch. consumerFn: add defer-early; add `slot = null` after each per-type destroy.
-- `timer_via_mailbox.zig` — add defer-early; add `slot = null` after each per-type destroy in dispatch.
-- `mailbox_as_item.zig` — workerFn: add defer-early; add `slot = null` after each branch's free. Main receive site: rename `received` → `slot`; add `defer if (slot) |mh| { _ = mailbox.close(mh); mailbox.destroy(mh, allocator); }` before receive; clear `slot = null` after manual close+destroy so defer is no-op.
-- `oob_signal.zig` — add `defer if (slot) |p| helpers.freeItem(p, allocator)` before receive in for-loop; add `slot = null` after each `allocator.destroy` in dispatch. Fixes **leak** when `helpers.expect` returns error before destroy.
-- `multi_source_mailbox.zig` — workerFn: add defer-early; add `slot = null` after each per-type destroy.
-- `request_response.zig` — masterAFn: add defer-early on resp_slot; add `slot = null` after dispatch free. masterBFn: add defer-early on req_slot; add `slot = null` after dispatch free.
-
-**Correctness bugs fixed**:
-- `master_with_pool.zig` seed loop — item leaked if `mailbox.send` fails after `pool.get`. `defer pool.put` fixes it.
-- `oob_signal.zig` — item leaked if `helpers.expect` returns error before `allocator.destroy`. Defer-early fixes it.
-
-**`helpers/helpers.zig` — add `freeSlot`**:
-
-```zig
-pub fn freeSlot(slot: *polynode.Slot, alloc: std.mem.Allocator) void {
-    if (slot.*) |poly| {
-        freeItem(poly, alloc);
-        slot.* = null;
-    }
-}
-```
-
-`freeItem` frees memory but leaves the caller with a stale non-null slot.
-`freeSlot` wraps it: frees the item AND clears `slot.*` atomically. Null-safe (no-op when `slot.* == null`).
-
-**Defer pattern after this change**:
-```zig
-defer helpers.freeSlot(&slot, ctx.alloc);   // replaces: defer if (slot) |p| helpers.freeItem(p, alloc)
-```
-
-**Dispatch branch pattern after this change**:
-```zig
-if (types.EventPolyHelper.cast(poly)) |_| {
-    helpers.freeSlot(&slot, ctx.alloc);     // replaces: alloc.destroy(ev); slot = null;
-}
-```
-
-No `slot = null` lines scattered across dispatch branches — `freeSlot` handles free + clear atomically.
-Transfer paths are unaffected: `mailbox.send` already clears `slot.*`, making the defer a no-op.
-
-**Files that do NOT change**:
-- `fan_in.zig` — uses `receive_batch` (batch list walk, not slot-based receive). No slot acquire. Clean.
-- `batch_processing.zig` — sender-only pattern. Clean.
-- `oob_signal.zig` layer2 — sender-only. Clean.
-- `pipeline.zig` — sender-only workers. Clean.
-- `pool_as_item.zig` — `var slot: Slot = inner` (PoolHandle, not null-acquire). Clean.
-
-**Verification**:
-- `kitchen/build_and_test_debug.sh` — pass.
-- `kitchen/build_and_test_all.sh` — pass (all 4 modes).
-- `kitchen/build_cross_debug.sh` — pass.
-- AI-sh scan on all changed `.zig` files.
-- Update `design/STATUS.md` with INTR 1.d session log entry.
-
----
-
-### Stage 6 — Cancellation + Shutdown
-
-**Purpose**: the Zig-new behavior. Cancel vs close, clean teardown.
-
-**What to build** (api-reference-011.md cancel contract)
-- `Future.cancel`, `group.cancel` shutdown paths.
-- Broadcast path vs Future.cancel path.
-- Verify cancel-protected ops never leak items.
-
-**Scenarios**: task2 scenarios 3-16.
-
-**Checkpoint**
-- `error.Canceled != error.Closed` proven in tests.
-- No item lost on cancel during `pool.put`.
-- All kitchen scripts pass.
+**Key findings (Stage 6)**:
+- Test 14 required two mailboxes to avoid a race: `mbh_listen` (empty, guarantees block) and `mbh_data` (pre-loaded). Pre-loading items in the listen mailbox let the worker receive before cancel fired.
+- `io.recancel()` called on the mailbox's bound `io` (master's io) correctly re-arms the cancellation state. Workers pass `io` via context structs since worker function signatures do not expose their own `io`.
+- `pool.put` / `mailbox.close` / `pool.close` are cancel-protected (`lockUncancelable`) — verified in tests 13-14.
+- `io.checkCancel()` fires at the next cancellation point from a CPU-bound loop — verified in test 16.
 
 ---
 
@@ -398,7 +301,7 @@ Transfer paths are unaffected: `mailbox.send` already clears `slot.*`, making th
 
 **Purpose**: bridge blocking mailbox/pool into `Io.Select` and `Io.Future`.
 
-**What to build** (api-reference-011.md event source helpers)
+**What to build** (api-reference-012.md event source helpers)
 - `mailbox.ReceiveResult`, `mailbox.receive_future`.
 - `pool.PoolResult`, `pool.get_wait_future`.
 - Result by value inside the union — no `*Slot` crosses threads.
@@ -406,6 +309,24 @@ Transfer paths are unaffected: `mailbox.send` already clears `slot.*`, making th
 - `error.ConcurrencyUnavailable` on single-threaded backends.
 
 **Scenarios**: task2 scenarios 25-31, 42-56.
+
+**Prologue**: ask owner whether he wants an audit before Stage 7.
+
+**Execution checklist**
+
+- [ ] Step 0 — Prologue: audit or skip?
+- [ ] Step 1 — Read api-reference-012.md event source helpers section.
+- [ ] Step 2 — Implement `mailbox.receive_future` + `mailbox.ReceiveResult`.
+- [ ] Step 3 — Implement `pool.get_wait_future` + `pool.PoolResult`.
+- [ ] Step 4 — Write `tests/layer4_select.zig` (scenarios 25-31, 42-56).
+- [ ] Step 5 — Wire into `tests/matryoshka_tests.zig`.
+- [ ] Step 6 — `kitchen/build_and_test_debug.sh` — pass.
+- [ ] Step 7 — `kitchen/build_and_test_all.sh` — pass (all 4 modes).
+- [ ] Step 8 — `kitchen/build_cross_debug.sh` — pass.
+- [ ] Step 9 — Post-stage cleanup.
+- [ ] Step 10 — AI-sh + banned words scan.
+- [ ] Step 11 — Update `design/STATUS.md`.
+- [ ] Step 12 — Create `design/matryoshka-zig-implementation-plan-014.md`.
 
 **Checkpoint**
 - Single-threaded returns `error.ConcurrencyUnavailable`.
@@ -460,5 +381,5 @@ Totals: 94 task1 (Stages 1-4), 61 task2 (Stages 5-8).
 | Doc | Owns |
 |-----|------|
 | collected-context-003.md | Master reference. Paths, proposals, decisions, open items, Stages 0-5 + INTR 1 summary. |
-| matryoshka-api-reference-011.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, thread-safety, complexity. Wins over all other sources. |
+| matryoshka-api-reference-012.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, thread-safety, complexity. Wins over all other sources. |
 | matryoshka-zig-0.16-implementation-guide-001.md | **OLD — verify all details against API reference before use.** Zig how-to patterns: struct layout, condition_waitTimeout, cancel mechanics, Odin→Zig appendix. |

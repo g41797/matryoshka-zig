@@ -192,8 +192,8 @@ test "33 - close returns remaining items" {
     try testing.expectEqual(@as(usize, 3), count);
 }
 
-// --- Scenario 34: Close is idempotent ---
-test "34 - close is idempotent" {
+// --- Scenario 34: second close returns empty list ---
+test "34 - second close returns empty list" {
     const io: Io = testing.io;
     const alloc: std.mem.Allocator = testing.allocator;
 
@@ -579,7 +579,7 @@ test "48 - receive: HELD to IN_FLIGHT, slot is non-null" {
     try testing.expect(!polynode.is_linked(poly));
 }
 
-// --- Scenario 49: is_linked detection; assert fires in Debug/ReleaseSafe (no panic-catch in testing) ---
+// --- Scenario 49: is_linked detection; assert triggers in Debug/ReleaseSafe (no panic-catch in testing) ---
 test "49 - send linked item: is_linked detection (assert documented)" {
     var ev1: Event = .{ .code = 49 };
     var ev2: Event = .{ .code = 50 };

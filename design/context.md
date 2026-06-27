@@ -11,7 +11,7 @@ Architecture: [matryoshka-architecture-001.md](matryoshka-architecture-001.md) �
 
 Latest context: [collected-context-003.md](collected-context-003.md)
 
-Rules and plan: [matryoshka-zig-implementation-plan-012.md](matryoshka-zig-implementation-plan-012.md) — Section 0 (Sources), Section 1 (Process Rules + Build Order Rules), stages
+Rules and plan: [matryoshka-zig-implementation-plan-013.md](matryoshka-zig-implementation-plan-013.md) — Section 0 (Sources), Section 1 (Process Rules + Build Order Rules), stages
 
 Tests (Layers 1-3): [task1-tests-001.md](task1-tests-001.md) — 62 scenarios, correctness/edge cases/contract violations
 

@@ -27,7 +27,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
 
     helpers.freeSlot(&slot, allocator);
     try helpers.expect(error.OwnershipTransferFailed, slot == null, "slot should be null after destroy");
-    // defer fires as no-op
+    // defer runs as no-op
 }
 
 const helpers = @import("helpers");

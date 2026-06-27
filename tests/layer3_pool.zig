@@ -389,8 +389,8 @@ test "74 - pool.close calls on_close with all stored items" {
     try testing.expectEqual(@as(usize, 5), ctx.close_item_count);
 }
 
-// --- Scenario 75: pool.close is idempotent ---
-test "75 - pool.close is idempotent" {
+// --- Scenario 75: second pool.close is no-op ---
+test "75 - pool.close second call is no-op" {
     const io: Io = testing.io;
     const alloc: std.mem.Allocator = testing.allocator;
 
@@ -804,7 +804,7 @@ test "87 - ownership: IN_FLIGHT->FREE via pool.put with destroy" {
     try testing.expectEqual(@as(Slot, null), slot);
 }
 
-// --- Scenario 88: is_linked detection; assert fires on double pool.put in Debug/ReleaseSafe ---
+// --- Scenario 88: is_linked detection; assert triggers on double pool.put in Debug/ReleaseSafe ---
 test "88 - double pool.put: is_linked detection (assert documented)" {
     const io: Io = testing.io;
     const alloc: std.mem.Allocator = testing.allocator;

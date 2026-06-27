@@ -31,7 +31,7 @@
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-zig-implementation-plan-012.md
+- Plan: matryoshka-zig-implementation-plan-013.md
 
 ## Participants
 - Owner(g41797-human): design, decision-making
@@ -94,10 +94,53 @@ Stage 4 — DONE (97/97 tests).
 Stage 5.a — DONE (99/99 tests).
 Stage 5.b — DONE (107/107 tests).
 INTR 1 — DONE (107/107 tests). Plan version 011 created.
-Current: INTR 1 complete. Slot-based programming retrofit applied.
-Next: Stage 6 — Cancellation + Shutdown. Show intent first.
+Stage 6 — DONE (121/121 tests). Plan version 013 created.
+Current: Stage 6 complete. Cancellation + Shutdown tests done (14 tests, scenarios 3-16).
+Next: Stage 7 — Select + Future APIs. Show intent first.
 
 ## Session Log
+
+### 2026-06-27 — Session 16 (Stage 6 — Cancellation + Shutdown)
+**Participants**: human + Claude
+
+**Summary**
+Stage 6 complete. 14 new tests (scenarios 3-16) in `tests/layer4_cancel.zig`.
+
+Coverage:
+- Scenarios 3-4: `Future.cancel` and `Group.cancel` stop blocked workers.
+- Scenario 5: cancel deferred past `pool.put` (lockUncancelable); item not lost.
+- Scenario 6: broadcast shutdown via `mailbox.close` before join.
+- Scenario 7: cancel-first shutdown; pool and mailbox closed after worker exits.
+- Scenario 8: `pool.put` on closed pool; slot stays non-null; caller frees via defer.
+- Scenario 9: `mailbox.close` returns remaining items; verified 7 of 10.
+- Scenario 10: `pool.close` calls `on_close` with all 5 items.
+- Scenario 11: `error.Canceled` vs `error.Closed` in `mailbox.receive` (distinct).
+- Scenario 12: `error.Canceled` vs `error.Closed` in `pool.get_wait` (distinct).
+- Scenario 13: `pool.put` cancel-protected; `recancel()` + defer put succeeds.
+- Scenario 14: `mailbox.close` uses `lockUncancelable`; completes despite re-armed cancel.
+- Scenario 15: `recancel()` propagation — second `receive` also gets `error.Canceled`.
+- Scenario 16: `io.checkCancel()` in CPU-bound loop fires on cancel.
+
+**Fix during verification**: test 14 had a race — 3 items pre-loaded in the listen mailbox let the worker receive before cancel fired. Fixed by using two mailboxes: `mbh_listen` (always empty, guarantees block) and `mbh_data` (pre-loaded; closed by worker on cancel).
+
+**Changes**
+- `tests/layer4_cancel.zig` — new file: 14 tests (scenarios 3-16)
+- `tests/matryoshka_tests.zig` — added `@import("layer4_cancel.zig")`
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `kitchen/build_and_test_debug.sh` | pass (121/121 tests) |
+| `kitchen/build_and_test_all.sh` | pass (121/121 tests, all 4 modes) |
+| `kitchen/build_cross_debug.sh` | pass (mac x86_64, mac aarch64, windows x86_64) |
+| Post-stage cleanup | nothing to clean — no obsolete parts, no repeated code |
+| AI-sh + banned words scan | clean |
+| Plan version 013 | created `design/matryoshka-zig-implementation-plan-013.md` |
+| context.md | plan → 013 |
+| STATUS.md | sources → 013; stages line updated |
+
+**Next**: Stage 7 — Select + Future APIs. Show intent first.
 
 ### 2026-06-27 — Session 15 (doc update: PolyHelper.create/destroy rule)
 **Participants**: human + Claude
@@ -140,7 +183,7 @@ Full source audit (`.zig` + `.md`) and comprehensive fix pass. All four findings
 - `examples/layer4/request_response.zig` — `errdefer ctx.alloc.destroy(ev)` in masterAFn; `errdefer ctx.alloc.destroy(sn)` in masterBFn.
 
 **Doc fixes (active docs only)**
-- `design/matryoshka-api-reference-011.md` — `DLL.Node` → `List.Node`; `dll_node_ptr` → `list_node_ptr` (6 occurrences).
+- `design/matryoshka-api-reference-012.md` — `DLL.Node` → `List.Node`; `dll_node_ptr` → `list_node_ptr` (6 occurrences).
 - `design/matryoshka-api-reference-010.md` — same DLL fixes.
 - `design/matryoshka-zig-implementation-plan-011.md` — LE import order rule clarified (std last); Naming and Terminology section added (banned: `drain`, `dll`/`DLL`).
 - `design/collected-context-003.md` — `"block deepdives"` → `"layer deepdives"`.
@@ -258,7 +301,7 @@ Three sub-stages completed:
 - Full context for Opus: Stages 4-5 findings, owner API changes, Slot Rule, new idiom patterns, INTR 1 plan.
 - `design/context.md` updated to point to collected-context-003.
 
-**INTR 1.b** — `design/matryoshka-api-reference-011.md` written (Opus).
+**INTR 1.b** — `design/matryoshka-api-reference-012.md` written (Opus).
 - New section: `## Slot-based programming` — Slot Rule, 3 ASCII diagrams (lifecycle, transfer, defer-safety).
 - New section: `## Cooperative cleanup patterns` — 4 patterns with code snippets.
 - New subsection: `### PolyHelper — create and destroy` — signatures, old-vs-new, no_create_destroy diagram.
@@ -272,7 +315,7 @@ Three sub-stages completed:
 - `examples/layer3/capped_pool.zig` — verified (owner-applied defer-early confirmed).
 - `examples/layer3/pool_seeding.zig` — `m` → `slot`, defer-early in both loops.
 - `examples/layer3/pool_teardown.zig` — `m` → `slot`, defer-early.
-- `design/matryoshka-api-reference-011.md` — `m` → `slot` in all code snippets and signatures.
+- `design/matryoshka-api-reference-012.md` — `m` → `slot` in all code snippets and signatures.
 - `design/matryoshka-zig-implementation-plan-011.md` — new plan version. INTR 1 added as completed. Slot Rule added to Process Rules.
 - `design/context.md` — plan reference → 011, api-reference → 011.
 - `design/STATUS.md` — Sources of Truth → 011; this entry.
@@ -285,7 +328,7 @@ Owner applied before this session:
 
 **Changes**
 - `design/collected-context-003.md` — new (INTR 1.a)
-- `design/matryoshka-api-reference-011.md` — new (INTR 1.b + 1.c rename)
+- `design/matryoshka-api-reference-012.md` — new (INTR 1.b + 1.c rename)
 - `design/matryoshka-zig-implementation-plan-011.md` — new plan version
 - `design/context.md` — api-ref and plan pointers → 011
 - `design/STATUS.md` — sources updated; this entry
