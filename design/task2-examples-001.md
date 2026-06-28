@@ -41,6 +41,18 @@ Master is a concept, not a type. Each example may structure its coordination bou
 
 ---
 
+## Cross-Layer Integration (Layers 1-3)
+
+32. **Pool → Mailbox → Pool roundtrip** — `pool.get`, fill, `mailbox.send`, `mailbox.receive`, verify data, `pool.put` back. Single-threaded. Verify same pointer returned on second get. `[cross-layer ownership flow, no concurrency]`
+33. **Mixed types through shared mailbox** — Send Event and Sensor PolyNodes through same mailbox via `mailbox.send`. Receive, dispatch on tag (`== EVENT_TAG`), cast via `@fieldParentPtr`, verify data. `[Layer 1 tags + Layer 2 transport]`
+34. **Batch receive + pool return** — Send 10 items, `mailbox.receive_batch` returns `std.DoublyLinkedList`, walk via `popFirst()`, `pool.put_all` back to pool. Verify pool count. Same `std.DoublyLinkedList` flows from mailbox to pool — stdlib compatibility connects the layers. `[mailbox.receive_batch + pool.put_all integration, stdlib list]`
+35. **Pool hooks + mailbox flow** — on_get creates/reinits, `mailbox.send`, `mailbox.receive`, on_put decides keep/destroy. Full lifecycle through both layers. `[pool hooks + mailbox transport]`
+36. **Close ordering: pool then mailbox** — `pool.close` first (on_close frees stored items), then `mailbox.close` (returns `std.DoublyLinkedList`), walk via `popFirst()` and free. Verify no leaks. `[shutdown ordering, cross-layer cleanup]`
+37. **Close ordering: mailbox then pool** — `mailbox.close` first (worker returns item via `pool.put` while pool open), then `pool.close` (includes returned item in on_close). Verify same total items. `[alternative shutdown order, same correctness]`
+38. **Pool + Mailbox flow** — `pool.get`, fill, `mailbox.send`, `mailbox.receive`, `pool.put` back (single-threaded or two-thread). `[cross-layer ownership flow]`
+
+---
+
 ## stdlib Compatibility (Master-level)
 
 39. **Master shutdown: close → stdlib walk → free** — Master closes mailbox and pool. Walks both returned `std.DoublyLinkedList` results with `popFirst()`. Entire cleanup is standard Zig — no Matryoshka-specific drain/flush API needed. `[Master shutdown, stdlib list, no framework cleanup]`

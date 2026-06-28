@@ -21,11 +21,11 @@
 - AI-sh scan after every stage that changes *.md or *.zig.
 
 ## Sources of Truth
-- API: matryoshka-api-reference-012.md
+- API: matryoshka-api-reference-013.md
 - Zig details: matryoshka-zig-0.16-implementation-guide-001.md
 - Architecture: matryoshka-architecture-foundation-4-001.md
 - Architecture introduction: matryoshka-architecture-001.md
-- Tests: task1-tests-001.md, task2-tests-001.md
+- Tests: task1-tests-001.md (73 scenarios, Layers 1-3), task2-tests-001.md (16 scenarios, Layer 4)
 - Examples: task1-examples-001.md, task2-examples-001.md
 - Scenarios (historical): task1-scenarios-001.md (92), task2-scenarios-001.md (61)
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
@@ -100,6 +100,71 @@ Next: Stage 7 — Select + Future APIs. Show intent first.
 
 ## Session Log
 
+### 2026-06-27 — Pre-Stage 7 (API reference 013 + memory)
+**Participants**: human + Claude
+
+**Summary**
+Doc-only update. No code changes. No kitchen scripts.
+
+Investigated `Io.Select` internals by reading `std/Io.zig:1367` and ICE agent source.
+Key findings:
+- `Io.Select(U)` is `queue: Queue(U)` + `group: Group`, not a Future container.
+- `select.concurrent(field, fn, args)` spawns fn, wraps result, puts in queue.
+- Direct push: `select.queue.putOneUncancelable(io, value)` from any thread.
+- `io.concurrent` copies args before returning — no heap ctx needed.
+
+Saved findings to Claude memory (`reference_io_select_internals.md`, `reference_io_concurrent_args.md`).
+
+Updated API reference to 013:
+- `## Prolog: std.Io` — corrected `Io.Select` description and event source diagram.
+- Added `receiveResult` and `getWaitResult` as primary public blocking functions.
+- Updated `receive_future` and `get_wait_future` as thin wrappers (no heap allocation).
+- Updated cancel contract table and Master event source diagram.
+
+**Changes**
+- `design/matryoshka-api-reference-013.md` — new version
+- `design/context.md` — api-ref → 013
+- `design/STATUS.md` — sources → 013; this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| Kitchen scripts | not run — doc-only stage |
+| Post-stage cleanup | doc-only — no code to clean |
+| AI-sh + banned words scan | see below |
+
+**AI-sh scan** (full file):
+- `fires` × 5 found in slot-based programming code comments — fixed: `fires` → `runs`.
+
+**Additional changes (same session)**
+- `#### Io.Select — internals` subsection added to `### io.concurrent and Io.Group` section — verified fields, select.concurrent mechanics, direct push pattern, ICE agent reference.
+- Args-copying note added to `#### io.concurrent` — stack-allocated args safe, no heap ctx needed.
+- 013 change log entry updated.
+
+**Next**: Stage 7 — implement `receiveResult`, `getWaitResult`, `receive_future`, `get_wait_future` in src/; examples; test wrappers.
+
+---
+
+### 2026-06-27 — Doc fix (pre-Stage 7 — scenario split cleanup)
+**Participants**: human + Claude
+
+**Summary**
+Resolved stale references to deleted `task1-tests-001.md` and `task2-tests-001.md`.
+Recreated both files. Reclassified scenarios 32-38 as examples (cross-layer integration — all have stories, not unit-test style).
+
+**Changes**
+- `design/task1-tests-001.md` — recreated: 73 test scenarios (1-20, 26-52, 63-88) for Layers 1-3
+- `design/task2-tests-001.md` — recreated: 16 test scenarios (1-16) for Layer 4. Scenarios 32-38 excluded (reclassified as examples).
+- `design/task2-examples-001.md` — added scenarios 32-38 (cross-layer integration)
+- `design/context.md` — updated counts and descriptions for all four task docs
+- `design/STATUS.md` — updated Sources of Truth counts and notes
+
+**Verification**
+Docs-only change. No code changes, no kitchen scripts needed.
+
+---
+
 ### 2026-06-27 — Session 16 (Stage 6 — Cancellation + Shutdown)
 **Participants**: human + Claude
 
@@ -127,6 +192,13 @@ Coverage:
 - `tests/layer4_cancel.zig` — new file: 14 tests (scenarios 3-16)
 - `tests/matryoshka_tests.zig` — added `@import("layer4_cancel.zig")`
 
+**Post-stage word cleanup** (after initial verification):
+- `tests/layer4_cancel.zig` — `fires` × 5 → `takes effect` / `runs` / `triggers`; `re-arm` × 3 → `activate cancel again`; `faces` × 1 removed
+- `tests/layer2_mailbox.zig` — `idempotent` × 2 → behavior description
+- `tests/layer3_pool.zig` — `idempotent` × 1 → behavior description; `fires` × 1 → `triggers`
+- `examples/layer1/ownership_transfer.zig` — `fires` × 1 → `runs`
+- `design/matryoshka-zig-implementation-plan-013.md` — banned list updated: `fires`, `faces` added
+
 **Verification**
 
 | Check | Result |
@@ -135,7 +207,8 @@ Coverage:
 | `kitchen/build_and_test_all.sh` | pass (121/121 tests, all 4 modes) |
 | `kitchen/build_cross_debug.sh` | pass (mac x86_64, mac aarch64, windows x86_64) |
 | Post-stage cleanup | nothing to clean — no obsolete parts, no repeated code |
-| AI-sh + banned words scan | clean |
+| AI-sh + banned words scan | hits found and replaced: `fires` ×8, `idempotent` ×3, `re-arm` ×3, `faces` ×1 across 4 files; `fires`+`faces` added to banned list |
+| Post-cleanup debug re-run | pass (121/121 tests) |
 | Plan version 013 | created `design/matryoshka-zig-implementation-plan-013.md` |
 | context.md | plan → 013 |
 | STATUS.md | sources → 013; stages line updated |
@@ -779,10 +852,10 @@ Stage 1.a: implemented PolyNode ownership atom and Layer 1 tests. Types: PolyTag
 Stage 0.5: re-partitioned scenarios from task1-scenarios-001.md (86) and task2-scenarios-001.md (61) into four docs. Tests and examples separated by job: tests check correctness, examples show stories. Scenario numbers preserved. Updated context.md with pointers to all four new docs.
 
 **Changes**
-- `design/task1-tests-001.md` — 62 test scenarios for Layers 1-3
-- `design/task1-examples-001.md` — 12 example scenarios for Layers 1-3
-- `design/task2-tests-001.md` — 23 test scenarios for Layer 4 + cross-layer
-- `design/task2-examples-001.md` — 38 example scenarios for Layer 4 + cross-layer
+- `design/task1-tests-001.md` — 73 test scenarios for Layers 1-3 (recreated; original was deleted)
+- `design/task1-examples-001.md` — 29 example scenarios for Layers 1-3
+- `design/task2-tests-001.md` — 16 test scenarios for Layer 4 (recreated; original was deleted; scenarios 32-38 reclassified as examples)
+- `design/task2-examples-001.md` — 45 example scenarios for Layer 4 + cross-layer (32-38 added as examples)
 - `design/context.md` — added pointers to all four new docs + historical sources
 
 **Verification**
