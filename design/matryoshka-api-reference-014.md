@@ -37,28 +37,35 @@ Zig 0.16 provides `std.Io` — the runtime's interface for concurrent and I/O op
 
 - `Io` — passed around to anything that needs threads, timers, or waiting. Think of it as "access to the runtime."
 - `Future(T)` — a result that isn't ready yet. You get the value by calling `.await()`.
-- `Io.Select` — waits on several Futures at once. Returns the first one that completes.
+- `Io.Select` — coordinates multiple concurrent event sources. Internally: `queue: Queue(U)` + `group: Group`. `select.await()` reads the next completed result from the queue.
 - `Io.Group` — runs several tasks. Waits for all of them to finish.
 - `io.concurrent()` — runs a blocking function in a separate task. Returns a Future for the result.
 - `ConcurrentError` — spawning a task failed (e.g. single-threaded backend, no threads available).
 
 ### Event sources
 
-An event source is anything that produces a `Future`.
+An event source is a blocking function passed to `select.concurrent`. When it returns,
+the result is wrapped in the Select union and placed in the internal queue.
+
+Two patterns for producing Select events:
+
+1. `select.concurrent(field, blockingFn, args)` — spawn a blocking function; result goes into the queue when done.
+2. `select.queue.putOneUncancelable(io, value)` — push directly from any thread without spawning.
+
+`io.concurrent` and `select.concurrent` copy the args before returning — stack-allocated args are safe.
 
 ```text
-  Timer ─────────► Future(void)
-  Socket read ───► Future([]u8)
-  File I/O ──────► Future([]u8)
-  concurrent() ──► Future(T)
+  blockingFn ────► select.concurrent(field, blockingFn, args)
                         │
-                        ▼
-                   Io.Select
+                        ▼ (fn runs, result → queue)
+                   Io.Select.queue
                       │   │
                       ▼   ▼
                completed  canceled
                (result)   (error.Canceled)
 ```
+
+`io.concurrent(fn, args)` — standalone version. Returns `Io.Future(T)` for direct await or `Io.Group` use.
 
 ### Cancel
 
@@ -224,14 +231,14 @@ Code order:                      Execution when acquire fails:
 
   var slot: Slot = null;              slot = null
   defer pool.put(ph, &slot);          acquire fails
-  try pool.get(..., &slot);           defer fires: pool.put sees null → no-op
+  try pool.get(..., &slot);           defer runs: pool.put sees null → no-op
   // work                          ✓ nothing lost
 
                                  Execution when item is transferred:
 
                                    slot = null (after acquire: slot is non-null)
                                    mailbox.send(mbh, &slot)  → slot = null
-                                   defer fires: pool.put sees null → no-op
+                                   defer runs: pool.put sees null → no-op
                                    ✓ item transferred, not double-recycled
 ```
 
@@ -250,7 +257,7 @@ var slot: Slot = null;
 defer pool.put(ph, &slot);              // no-op if slot == null
 try pool.get(ph, TAG, .new_only, &slot);
 // ... work ...
-// on transfer: slot = null → defer fires as no-op
+// on transfer: slot = null → defer runs as no-op
 // on no transfer: defer recycles item
 ```
 
@@ -263,7 +270,7 @@ var slot: Slot = null;
 defer EventPolyHelper.destroy(allocator, &slot);   // no-op if slot == null
 try EventPolyHelper.create(allocator, &slot);
 // ... work ...
-// on transfer: slot = null → defer fires as no-op
+// on transfer: slot = null → defer runs as no-op
 // on no transfer: defer frees item
 ```
 
@@ -289,7 +296,7 @@ defer pool.put(ph, &slot);
 try pool.get(ph, TAG, .new_only, &slot);
 // fill item ...
 try mailbox.send(mbh, &slot);   // send sets slot.* = null
-// defer fires: pool.put sees null → no-op
+// defer runs: pool.put sees null → no-op
 // result: item is in mailbox, not recycled to pool
 ```
 
@@ -978,8 +985,7 @@ pub fn is_it_you(tag: *const anyopaque) bool
 
 ### Event source helpers
 
-Mailbox as event source via `Future`.
-- `receive_future` converts blocking `receive` to a Future result.
+Mailbox as event source for `Io.Select` and `Io.Future`.
 
 Cancel and close in concurrent tasks:
 - Mailbox closed — blocked receivers wake with `error.Closed`.
@@ -1002,36 +1008,50 @@ pub const ReceiveResult = union(enum) {
 #### Functions
 
 ```zig
+pub fn receiveResult(mbh: MailboxHandle, timeout_ns: ?u64) ReceiveResult
+```
+- Blocking function. No error return — maps all outcomes to `ReceiveResult` variants.
+- Primary building block for Select integration:
+  ```zig
+  try select.concurrent(.inbox, mailbox.receiveResult, .{mbh, null});
+  ```
+- Also usable with `io.concurrent` or `group.concurrent`.
+
+```zig
 pub fn receive_future(mbh: MailboxHandle, timeout_ns: ?u64) ConcurrentError!Io.Future(ReceiveResult)
 ```
-- Spawns a concurrent task that:
-  - Creates a local `Slot`
-  - Calls `receive`
-  - Converts the result to `ReceiveResult`
-- Uses the mailbox's stored `io`.
-- Returns a Future that can be:
-  - Awaited directly
-  - Passed to `Io.Select`
-  - Passed to `Io.Group`
+- Thin wrapper: `return mbx.*.io.concurrent(receiveResult, .{mbh, timeout_ns})`.
+- No heap allocation — args copied by the runtime before `concurrent` returns.
+- Returns a Future for direct await or `Io.Group` use.
 - Returns `error.ConcurrencyUnavailable` on single-threaded backends.
 
 #### Cancel behavior
 
-- On `error.Canceled`, the adapter returns `.canceled` — the mailbox remains open.
+- On `error.Canceled`, returns `.canceled` — the mailbox remains open.
 - Closing is the Master's responsibility.
 
 #### When to use
 
-**Inside Matryoshka**: many senders push tagged PolyNodes into one mailbox.
-- Master reads them all from one place.
-- One queue, one ownership model, one shutdown path.
+**`select.concurrent` pattern** (primary):
+```zig
+try select.concurrent(.inbox, mailbox.receiveResult, .{mbh, null});
+const event = try select.await();
+switch (event) {
+    .inbox => |r| switch (r) { ... },
+    ...
+}
+```
 
-**Bridging to external Io**: use `receive_future`.
-- Combines mailbox traffic with other sources in one `Io.Select` loop:
-  - timers
-  - sockets
-  - files
-  - pool availability
+**`receive_future` pattern** (direct await or Group):
+```zig
+const fut = try mailbox.receive_future(mbh, null);
+const result = try fut.await(io);
+```
+
+**Bridging to external Io**: one `Io.Select` loop combines mailbox, timers, sockets, pool availability.
+- Matryoshka sources use `receiveResult` / `getWaitResult` via `select.concurrent`.
+- External sources use their own blocking functions via `select.concurrent`.
+- Direct push: `select.queue.putOneUncancelable(io, value)` for immediate events.
 
 ### Advanced: OOB (out of the box)
 
@@ -1135,6 +1155,23 @@ pub const PoolHooks = struct {
     on_close: *const fn (ctx: *anyopaque, list: *std.DoublyLinkedList) void,
 };
 ```
+
+**`in_pool_count` semantics**
+- `on_get`: count **after** removal — items remaining with this tag.
+- `on_put`: count **before** addition — items already stored with this tag.
+- Both values are **hints** — read under lock, passed to a hook running without lock;
+  the pool may have changed by the time the hook reads the value.
+
+**Hook concurrency**
+- Hooks are called **outside the pool mutex**.
+- Multiple threads may invoke hooks simultaneously — the pool does not serialize them.
+
+**Advice for hook implementers**
+- If your hook touches shared state, protect it.
+- Example: use `Io.Mutex` and call `lockUncancelable` to acquire it.
+  Hooks return `void` — `lock` (cancelable) is not an option here.
+- Obtain `io` from the surrounding context that owns the pool; do not acquire it inside the hook.
+- `CappedPoolCtx` in `helpers/helpers.zig` is the reference implementation of these rules.
 
 ### Functions
 
@@ -1243,8 +1280,7 @@ pub fn is_it_you(tag: *const anyopaque) bool
 
 ### Event source helpers
 
-Pool as event source via `Future`.
-- `get_wait_future` converts blocking `get_wait` to a Future result.
+Pool as event source for `Io.Select` and `Io.Future`.
 
 Cancel and close in concurrent tasks:
 - Pool closed — blocked callers wake with `error.Closed`.
@@ -1269,27 +1305,31 @@ pub const PoolResult = union(enum) {
 
 - The handle is inside the result, not behind a pointer. No `*Slot` is shared across threads.
 - When you get `.item`, the handle is yours. The pool no longer holds it.
-- Create a new future only after you've decided what to do with this handle.
+- Re-spawn the event source after handling each result.
 
 #### Functions
 
 ```zig
+pub fn getWaitResult(ph: PoolHandle, tag: *const anyopaque, timeout_ns: ?u64) PoolResult
+```
+- Blocking function. No error return — maps all outcomes to `PoolResult` variants.
+- Primary building block for Select integration:
+  ```zig
+  try select.concurrent(.pool, pool.getWaitResult, .{ph, TAG, null});
+  ```
+- Also usable with `io.concurrent` or `group.concurrent`.
+
+```zig
 pub fn get_wait_future(ph: PoolHandle, tag: *const anyopaque, timeout_ns: ?u64) ConcurrentError!Io.Future(PoolResult)
 ```
-- Spawns a concurrent task that:
-  - Creates a local `Slot`
-  - Calls `get_wait`
-  - Converts the result to `PoolResult`
-- Uses the pool's stored `io`.
-- Returns a Future that can be:
-  - Awaited directly
-  - Passed to `Io.Select`
-  - Passed to `Io.Group`
+- Thin wrapper: `return p.*.io.concurrent(getWaitResult, .{ph, tag, timeout_ns})`.
+- No heap allocation — args copied by the runtime before `concurrent` returns.
+- Returns a Future for direct await or `Io.Group` use.
 - Returns `error.ConcurrencyUnavailable` on single-threaded backends.
 
 #### Cancel behavior
 
-- On `error.Canceled`, the adapter returns `.canceled` — the pool remains open.
+- On `error.Canceled`, returns `.canceled` — the pool remains open.
 - Closing is the Master's responsibility.
 
 ### Hook discipline
@@ -1397,6 +1437,7 @@ try fut.await(io);   // blocks until worker exits; returns worker's return type
 ```
 
 - `args` is a tuple — `.{arg1, arg2, ...}` — passed verbatim to `function`.
+- `io.concurrent` copies `args` before returning. Stack-allocated args are safe — no heap ctx needed.
 - No `io` is injected. The worker receives exactly what is in `args`.
 - If the worker needs `io`, pass it explicitly: `.{io, &ctx}`.
 - `fut.await(io)` returns the worker's return type directly. Use `try` if it is an error union.
@@ -1450,6 +1491,49 @@ try group.await(io);   // blocks until all workers exit
 - `group.cancel(io)` is safe to call if already awaited — it is a no-op.
 - `group.concurrent` after `group.await` starts a new round of tasks in the same group.
 
+#### Io.Select — internals
+
+Verified from `std/Io.zig:1367`.
+
+Public fields:
+
+```zig
+pub fn Select(comptime U: type) type {
+    return struct {
+        io: Io,
+        group: Group,
+        queue: Queue(U),
+        ...
+    };
+}
+```
+
+- `queue: Queue(U)` — completed results land here.
+- `group: Group` — owns all spawned concurrent tasks.
+- `select.await()` = `queue.getOne(io)` — blocks until the next result arrives.
+
+`select.concurrent(field, fn, args)`:
+- Spawns `fn` concurrently via `group`.
+- `fn` return value is wrapped: `@unionInit(U, @tagName(field), result)`.
+- Wrapped value is put into `queue` via `queue.putOneUncancelable`.
+
+Direct push (no spawn):
+
+```zig
+select.queue.putOneUncancelable(select.io, .{ .field = value }) catch {};
+```
+
+- Puts a result directly from any thread or callback.
+- No concurrent task needed.
+- Used when the result is already available (e.g. a close notification, an external callback).
+
+`select.concurrent` copies `args` before returning — same guarantee as `io.concurrent`.
+
+ICE agent reference (`src/ice/agent.zig`):
+- Line 134: `select.concurrent(.connectivity_check, Io.sleep, ...)` — blocking fn
+- Lines 241-242: `select.queue.putOneUncancelable(...)` — direct push from external goroutine
+- Line 273: direct push from close callback
+
 #### Io backend for Layer 4 tests and examples
 
 Layer 1-3 tests use `std.Io.Threaded.global_single_threaded.*.io()` — no concurrency needed.
@@ -1496,15 +1580,16 @@ See **Prolog: std.Io** for the general `Future` → `Io.Select` pattern.
 Matryoshka plugs into the same pattern:
 
 ```text
-  receive_future ──► Future(ReceiveResult) ──┐
-  get_wait_future ─► Future(PoolResult)    ──┼──► Io.Select ──► Master dispatch
-  Timer ───────────► Future(void)          ──┤
-  Socket read ─────► Future([]u8)          ──┘
+  mailbox.receiveResult ──► select.concurrent(.inbox, ...)  ──┐
+  pool.getWaitResult    ──► select.concurrent(.pool, ...)   ──┼──► Io.Select.queue ──► Master dispatch
+  Io.sleep              ──► select.concurrent(.timer, ...)  ──┤
+  direct push           ──► select.queue.putOneUncancelable ──┘
 ```
 
-- `mailbox.receive_future` — mailbox as event source.
-- `pool.get_wait_future` — pool as event source.
-- Master calls `select.await()`, handles the result, re-arms the source.
+- `mailbox.receiveResult` + `select.concurrent` — mailbox as Select event source.
+- `pool.getWaitResult` + `select.concurrent` — pool as Select event source.
+- `mailbox.receive_future` / `pool.get_wait_future` — Future wrappers for direct await or `Io.Group`.
+- Master calls `select.await()`, handles the result, re-spawns the source.
 
 ---
 
@@ -1535,8 +1620,10 @@ The signature is the single source of truth.
 | `pool.put` | no | non-blocking |
 | `pool.put_all` | no | non-blocking |
 | `pool.close` | no | non-blocking |
-| `mailbox.receive_future` | **yes** | spawns `receive` concurrently |
-| `pool.get_wait_future` | **yes** | spawns `get_wait` concurrently |
+| `mailbox.receiveResult` | **yes** | blocking; cancelable via task cancel |
+| `mailbox.receive_future` | **yes** | thin wrapper around `io.concurrent(receiveResult, ...)` |
+| `pool.getWaitResult` | **yes** | blocking; cancelable via task cancel |
+| `pool.get_wait_future` | **yes** | thin wrapper around `io.concurrent(getWaitResult, ...)` |
 
 ---
 
@@ -1679,6 +1766,7 @@ Valid combinations:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 013 | 2026-06-28 | `## Prolog: std.Io` — corrected `Io.Select` description (Queue(U)+Group, not Future container). Updated event source diagram and added direct push pattern. Added `receiveResult` and `getWaitResult` as primary blocking functions. Updated `receive_future` and `get_wait_future` as thin wrappers (no heap allocation). Updated cancel contract table. Updated Master event source diagram. Added `#### Io.Select — internals` subsection (verified fields, select.concurrent mechanics, direct push, ICE agent reference). Added args-copying note to `#### io.concurrent`. Fixed `fires` → `runs` ×5 in slot-based programming code comments. |
 | 012 | 2026-06-27 | New rule `### No raw allocator calls on PolyNode-based types` in `## Cooperative cleanup patterns`. Violation/correct/exempt code examples. |
 | 011 | 2026-06-27 | New `## Slot-based programming` section: slot rule, lifecycle diagram, ownership-transfer diagram, defer-before-acquisition diagram. New `## Cooperative cleanup patterns` section: four patterns with code + diagrams. New `### PolyHelper — create and destroy` subsection: create/destroy functions, old-vs-new comparison, no_create_destroy comptime selection. Updated pool.put: null slot is now a no-op (no-op bullet added, assert clarified). |
 | 010 | 2026-06-26 | New `### io.concurrent and Io.Group — verified call syntax` subsection in Master section. Covers exact call patterns (verified from std/Io.zig + ICE agent), no-io-injection rule, worker return type constraint, Future resource rules, Io backend selection for Layer 4 tests and examples. |
@@ -1690,6 +1778,45 @@ Valid combinations:
 | 004 | 2026-06-23 | Proposal 29: `pool.put` open/closed behavior clarified. Proposal 30: `receive_select` and `get_wait_select` removed — `Future` composes directly with `Io.Select`, dedicated Select adapters are unnecessary API surface. |
 | 005 | 2026-06-24 | Proposal 31: Reformat for readability and `///` doc comment use. Cancel indicator rule. Cancel table corrected. Event source concept added to Master with diagrams. Mailbox Integration section merged into Event source helpers. Informal terms cleaned up. |
 | 006 | 2026-06-24 | Proposal 32: Staccato rhythm for all prose. Every non-function section reformatted: short intro then bullets. Comma-separated lists broken into bullet lists. |
+
+---
+
+## Change manifest (013) — for downstream propagation
+
+### Prolog: std.Io — corrected
+
+- `Io.Select` bullet: replaced "waits on several Futures at once" with accurate description (Queue(U)+Group).
+- Event source section: replaced "anything that produces a Future" with blocking-function + select.concurrent model.
+- Event source diagram: replaced Future-centric diagram with select.concurrent + direct push diagram.
+- Added: `io.concurrent` / `select.concurrent` copy args before returning — stack args are safe.
+
+### mailbox — Event source helpers
+
+- Added `receiveResult(mbh, timeout_ns) ReceiveResult` — primary public blocking function.
+- Updated `receive_future` description: thin wrapper, no heap allocation.
+- Updated "When to use" section: select.concurrent pattern shown first, receive_future second.
+
+### pool — Event source helpers
+
+- Added `getWaitResult(ph, tag, timeout_ns) PoolResult` — primary public blocking function.
+- Updated `get_wait_future` description: thin wrapper, no heap allocation.
+
+### Cancel contract summary
+
+- Added rows for `receiveResult` and `getWaitResult`.
+
+### Master section — event source diagram
+
+- Replaced Future-centric diagram with select.concurrent + direct push model.
+
+### io.concurrent and Io.Group section — two additions
+
+- `#### io.concurrent`: added args-copying bullet — `io.concurrent` copies args before returning; stack args safe; no heap ctx needed.
+- `#### Io.Select — internals`: new subsection. Verified public fields (`queue: Queue(U)`, `group: Group`), `select.await()` mechanics, `select.concurrent` wrapping logic, direct push pattern, ICE agent reference.
+
+### Slot-based programming — `fires` fixed
+
+- `defer fires` → `defer runs` in 5 code comment annotations (lines 234, 241, 260, 273, 299).
 
 ---
 

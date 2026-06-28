@@ -21,7 +21,7 @@
 - AI-sh scan after every stage that changes *.md or *.zig.
 
 ## Sources of Truth
-- API: matryoshka-api-reference-013.md
+- API: matryoshka-api-reference-014.md
 - Zig details: matryoshka-zig-0.16-implementation-guide-001.md
 - Architecture: matryoshka-architecture-foundation-4-001.md
 - Architecture introduction: matryoshka-architecture-001.md
@@ -31,7 +31,7 @@
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-zig-implementation-plan-013.md
+- Plan: matryoshka-zig-implementation-plan-014.md
 
 ## Participants
 - Owner(g41797-human): design, decision-making
@@ -95,10 +95,48 @@ Stage 5.a — DONE (99/99 tests).
 Stage 5.b — DONE (107/107 tests).
 INTR 1 — DONE (107/107 tests). Plan version 011 created.
 Stage 6 — DONE (121/121 tests). Plan version 013 created.
-Current: Stage 6 complete. Cancellation + Shutdown tests done (14 tests, scenarios 3-16).
+INTR 2 — DONE (121/121 tests). Plan version 014 created.
+Current: INTR 2 complete. CappedPoolCtx thread-safe; hook concurrency documented in api-reference-014.
 Next: Stage 7 — Select + Future APIs. Show intent first.
 
 ## Session Log
+
+### 2026-06-28 — Session 17 (INTR 2 — Thread-safe hooks + multi-thread example)
+**Participants**: human + Claude
+
+**Summary**
+Pool hooks are called outside the pool mutex — multiple threads can invoke them simultaneously.
+`CappedPoolCtx` was not thread-safe: it used the stale `in_pool_count` hint for the cap decision.
+INTR 2 fixes this and documents the hook concurrency contract.
+
+Key decisions:
+- `std.Thread.Mutex` banned by rules and absent from Zig 0.16 — use `Io.Mutex.lockUncancelable`.
+- Hooks return `void` — cancelable `lock` is not an option.
+- `CappedPoolCtx` now owns `io`, `mutex: Io.Mutex`, and `count: usize` (accurate, not a hint).
+- `capped_pool.zig` example replaced with 4-thread concurrent get/put loop.
+- New process rule added to plan: when creating any new doc version, update all cross-references automatically.
+
+**Changes**
+- `design/matryoshka-api-reference-014.md` — new version; added `in_pool_count` semantics, hook concurrency, implementer advice
+- `helpers/helpers.zig` — `CappedPoolCtx`: added `io`, `mutex`, `count`; `onGet`/`onPut` use `lockUncancelable`
+- `examples/layer3/capped_pool.zig` — replaced with 4-thread multi-thread example
+- `design/matryoshka-zig-implementation-plan-014.md` — new version; INTR 2 section; doc link rule; stage map updated
+- `design/context.md` — api-ref → 014; plan → 014
+- `design/STATUS.md` — sources → 014; stages → INTR 2 DONE; this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `build_and_test_debug.sh` | 121/121 pass |
+| `build_and_test_all.sh` | 121/121 pass (all 4 modes) |
+| `build_cross_debug.sh` | 5/5 steps pass (macOS x86_64, aarch64, Windows x86_64) |
+| Post-stage cleanup | no obsolete code found |
+| AI-sh + banned words scan | see below |
+
+**AI-sh scan**: no violations found.
+
+---
 
 ### 2026-06-27 — Pre-Stage 7 (API reference 013 + memory)
 **Participants**: human + Claude
@@ -221,11 +259,11 @@ Coverage:
 **Summary**
 Doc-only update. No code changes. No kitchen scripts.
 
-Added `### No raw allocator calls on PolyNode-based types` rule to `## Cooperative cleanup patterns` in api-reference-012.md. Same rule as one bullet in `### Implementation (MUST)` in plan-012.md. Collapsed INTR 1.d to one-line summary in plan-012.md.
+Added `### No raw allocator calls on PolyNode-based types` rule to `## Cooperative cleanup patterns` in api-reference-013.md. Same rule as one bullet in `### Implementation (MUST)` in plan-013.md. Collapsed INTR 1.d to one-line summary in plan-013.md.
 
 **Changes**
-- `design/matryoshka-api-reference-012.md` — new version; rule + violation/correct/exempt + change log + manifest
-- `design/matryoshka-zig-implementation-plan-012.md` — new version; Implementation MUST bullet added; INTR 1.d collapsed
+- `design/matryoshka-api-reference-013.md` — new version; rule + violation/correct/exempt + change log + manifest
+- `design/matryoshka-zig-implementation-plan-013.md` — new version; Implementation MUST bullet added; INTR 1.d collapsed
 - `design/context.md` — api-ref → 012, plan → 012
 - `design/STATUS.md` — sources → 012; this entry
 
@@ -256,7 +294,7 @@ Full source audit (`.zig` + `.md`) and comprehensive fix pass. All four findings
 - `examples/layer4/request_response.zig` — `errdefer ctx.alloc.destroy(ev)` in masterAFn; `errdefer ctx.alloc.destroy(sn)` in masterBFn.
 
 **Doc fixes (active docs only)**
-- `design/matryoshka-api-reference-012.md` — `DLL.Node` → `List.Node`; `dll_node_ptr` → `list_node_ptr` (6 occurrences).
+- `design/matryoshka-api-reference-013.md` — `DLL.Node` → `List.Node`; `dll_node_ptr` → `list_node_ptr` (6 occurrences).
 - `design/matryoshka-api-reference-010.md` — same DLL fixes.
 - `design/matryoshka-zig-implementation-plan-011.md` — LE import order rule clarified (std last); Naming and Terminology section added (banned: `drain`, `dll`/`DLL`).
 - `design/collected-context-003.md` — `"block deepdives"` → `"layer deepdives"`.
@@ -374,7 +412,7 @@ Three sub-stages completed:
 - Full context for Opus: Stages 4-5 findings, owner API changes, Slot Rule, new idiom patterns, INTR 1 plan.
 - `design/context.md` updated to point to collected-context-003.
 
-**INTR 1.b** — `design/matryoshka-api-reference-012.md` written (Opus).
+**INTR 1.b** — `design/matryoshka-api-reference-013.md` written (Opus).
 - New section: `## Slot-based programming` — Slot Rule, 3 ASCII diagrams (lifecycle, transfer, defer-safety).
 - New section: `## Cooperative cleanup patterns` — 4 patterns with code snippets.
 - New subsection: `### PolyHelper — create and destroy` — signatures, old-vs-new, no_create_destroy diagram.
@@ -388,7 +426,7 @@ Three sub-stages completed:
 - `examples/layer3/capped_pool.zig` — verified (owner-applied defer-early confirmed).
 - `examples/layer3/pool_seeding.zig` — `m` → `slot`, defer-early in both loops.
 - `examples/layer3/pool_teardown.zig` — `m` → `slot`, defer-early.
-- `design/matryoshka-api-reference-012.md` — `m` → `slot` in all code snippets and signatures.
+- `design/matryoshka-api-reference-013.md` — `m` → `slot` in all code snippets and signatures.
 - `design/matryoshka-zig-implementation-plan-011.md` — new plan version. INTR 1 added as completed. Slot Rule added to Process Rules.
 - `design/context.md` — plan reference → 011, api-reference → 011.
 - `design/STATUS.md` — Sources of Truth → 011; this entry.
@@ -401,7 +439,7 @@ Owner applied before this session:
 
 **Changes**
 - `design/collected-context-003.md` — new (INTR 1.a)
-- `design/matryoshka-api-reference-012.md` — new (INTR 1.b + 1.c rename)
+- `design/matryoshka-api-reference-013.md` — new (INTR 1.b + 1.c rename)
 - `design/matryoshka-zig-implementation-plan-011.md` — new plan version
 - `design/context.md` — api-ref and plan pointers → 011
 - `design/STATUS.md` — sources updated; this entry

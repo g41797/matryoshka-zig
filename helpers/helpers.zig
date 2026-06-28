@@ -85,7 +85,10 @@ pub const AlwaysCreateCtx = struct {
 
 pub const CappedPoolCtx = struct {
     alloc: std.mem.Allocator,
-    cap: usize,
+    cap:   usize,
+    io:    Io,
+    mutex: Io.Mutex = .init,
+    count: usize = 0,
 
     pub fn poolHooks(self: *CappedPoolCtx, tags: []const *const anyopaque) pool_mod.PoolHooks {
         return .{
@@ -98,27 +101,42 @@ pub const CappedPoolCtx = struct {
     }
 
     fn onGet(ctx: *anyopaque, tag: *const anyopaque, _: usize, slot: *polynode.Slot) void {
-        if (slot.* != null) return;
         const self: *CappedPoolCtx = @ptrCast(@alignCast(ctx));
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+
+        if (slot.* != null) {
+            // item came from pool — pool already decremented its count; mirror that here
+            self.count -= 1;
+            return;
+        }
+        // no item in pool — create a fresh one (not counted until put back)
         createByTag(tag, self.alloc, slot);
     }
 
-    fn onPut(ctx: *anyopaque, in_pool_count: usize, slot: *polynode.Slot) void {
+    fn onPut(ctx: *anyopaque, _: usize, slot: *polynode.Slot) void {
         if (slot.* == null) return;
         const self: *CappedPoolCtx = @ptrCast(@alignCast(ctx));
-        if (in_pool_count >= self.cap) {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+
+        if (self.count >= self.cap) {
             freeItem(slot.*.?, self.alloc);
             slot.* = null;
+        } else {
+            self.count += 1;
         }
     }
 
     fn onClose(ctx: *anyopaque, list: *std.DoublyLinkedList) void {
         const self: *CappedPoolCtx = @ptrCast(@alignCast(ctx));
         freeList(list, self.alloc);
+        self.count = 0;
     }
 };
 
 const polynode = @import("matryoshka").polynode;
 const pool_mod = @import("matryoshka").pool;
 const std = @import("std");
+const Io = std.Io;
 const log = std.log;
