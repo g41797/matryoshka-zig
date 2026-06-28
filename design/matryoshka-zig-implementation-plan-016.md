@@ -1,4 +1,4 @@
-# Matryoshka Zig 0.16 — Staged Implementation Plan (013)
+# Matryoshka Zig 0.16 — Staged Implementation Plan (016)
 
 Plan document only. No code here.
 The specs are already written. This document tells the implementer how to
@@ -52,10 +52,10 @@ Legacy Zig mailbox. Starting point for `_Mailbox`.
 
 ### Design docs — `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/`
 
-- `matryoshka-api-reference-013.md` — **primary source of truth**: signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, io.concurrent and Io.Group verified call syntax. Wins over all other sources on any conflict.
+- `matryoshka-api-reference-014.md` — **primary source of truth**: signatures, types, error sets, cancel contract, ownership lifecycle, contract violations, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, io.concurrent and Io.Group verified call syntax, receiveResult/getWaitResult/receive_future/get_wait_future. Wins over all other sources on any conflict.
 - `matryoshka-architecture-001.md` — why, concepts, flows
 - `matryoshka-architecture-foundation-4-001.md` — language-independent architecture
-- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-013.md` before use.
+- `matryoshka-zig-0.16-implementation-guide-001.md` — **OLD, do not trust directly**. Useful only as a hint for Zig-specific patterns (struct layout, condition_waitTimeout, cancel mechanics). Every signature, type, error set, and assert from this file must be verified against `matryoshka-api-reference-014.md` before use.
 - `collected-context-003.md` — master reference, proposals, decisions
 - `task1-scenarios-001.md` — 92 scenarios (Layers 1-3) — historical source
 - `task2-scenarios-001.md` — 61 scenarios (Layer 4+) — historical source
@@ -89,6 +89,11 @@ These rules are writen in blood. Follow them
 - Banned words in identifiers, comments, and docs (beyond AI-sh list):
   - `drain` — use `clear`, `reset`, `empty`, or a domain verb. Example: `clearList` not `drainList`.
   - `dll` / `DLL` — abbreviation for DoublyLinkedList. Confusing (clash with Windows DLL). Use `List.Node`, `list_node_ptr`, or spell out `DoublyLinkedList`.
+
+### Examples (MUST)
+- **ASCII ownership diagram in every example**: Every file under `examples/` must have an ASCII ownership circuit diagram as a comment block at the top of the file. No example is complete without it.
+- Format: box-and-arrow, single comment block, no prose.
+- Absence of a diagram = example not done.
 
 ### Build Order Rules (MUST)
 
@@ -147,11 +152,11 @@ These rules are writen in blood. Follow them
 
 ### Document Versioning (MUST)
 - Never overwrite an important design doc. Create a new file with incremented version suffix (-001, -002, etc.).
-- If other docs reference the updated doc, update those links to the new version.
+- **Doc link rule**: When creating any new version of any document, automatically update all cross-references to the old version across all other documents. No exception. Owner must never need to do this manually.
 - `design/context.md` is the stable entry point — always points to the latest `collected-context-NNN.md`.
 
 ### Plan Versioning (MUST)
-- After each completed stage, create a new plan version (e.g., plan-009 → plan-010).
+- After each completed stage, create a new plan version (e.g., plan-015 → plan-016).
 - In the new version, collapse completed stages to a one-line summary: "Stage N — Name. DONE. See Session X."
 - Keep active + future stages in full detail.
 - Old plan versions stay as historical record. Do not delete them.
@@ -169,7 +174,7 @@ These rules are writen in blood. Follow them
 - Each fix in a multi-fix plan needs its own approval.
 
 ### Implementation (MUST)
-- Source of truth for signatures, types, errors: `matryoshka-api-reference-013.md`. Wins over all other sources.
+- Source of truth for signatures, types, errors: `matryoshka-api-reference-014.md`. Wins over all other sources.
 - Implementation guide (`matryoshka-zig-0.16-implementation-guide-001.md`) is OLD — verify every detail against the API reference before use.
 - Source of truth for architecture: `matryoshka-architecture-foundation-4-001.md`.
 - Architecture introduction (why, concepts, flows): `matryoshka-architecture-001.md`.
@@ -183,7 +188,7 @@ These rules are writen in blood. Follow them
   for both `_Mailbox` and `_Pool` (Zig has no native `Io.Condition.waitTimeout`,
   issue codeberg/zig#31278).
 - Architectural changes need explicit owner approval before implementation.
-- Never use `allocator.create` / `allocator.destroy` directly on PolyNode-based user types (Event, Sensor, Timer, ShutdownCommand) in examples or tests. Use `PolyHelper.create`, `PolyHelper.destroy`, or `helpers.freeSlot`. Exempt: infrastructure internals, hook bodies, non-PolyNode structs. See `matryoshka-api-reference-013.md § Cooperative cleanup patterns`.
+- Never use `allocator.create` / `allocator.destroy` directly on PolyNode-based user types (Event, Sensor, Timer, ShutdownCommand) in examples or tests. Use `PolyHelper.create`, `PolyHelper.destroy`, or `helpers.freeSlot`. Exempt: infrastructure internals, hook bodies, non-PolyNode structs. See `matryoshka-api-reference-014.md § Cooperative cleanup patterns`.
 
 ### Slot Rule (MUST)
 - Never overwrite a non-null slot.
@@ -232,13 +237,13 @@ These rules are writen in blood. Follow them
 9. Comments check. AI-sh scan. Report to owner.
 10. Rethink the next stage before starting it.
 
-### Prologue for every stage(MUST)
+### Prologue for every stage (MUST)
 
 Before start of every stage ask owner whether he wants audit.
 For 'yes' or similar answer:
 
 - read design/STATUS.md and design/context.md
-- read matryoshka-api-reference-013.md
+- read matryoshka-api-reference-014.md
 - then audit all .zig files in examples/ and tests/ for violations of rules
 - List every file and line, do not fix anything
 
@@ -267,7 +272,10 @@ Stage 4     Layer 2+3  Infra as items
 Stage 5     Layer 4  Master (concurrency)
 INTR 1      Slot-based programming retrofit (pre-Stage-6)
 Stage 6     Cancellation + shutdown
-Stage 7     Event sources (Select / Future)
+INTR 2      Thread-safe hooks + multi-thread example (pre-Stage-7)
+Stage 7.a   Event sources — implementation (mailbox + pool)
+INTR 3      ASCII ownership diagrams retrofit (all existing examples)
+Stage 7.b   Event sources — examples (Select / Future)
 Stage 8     Mailbox-less patterns + cross-layer
 Stage 9     Docs + README + autodocs
 ```
@@ -288,50 +296,10 @@ Stage 9     Docs + README + autodocs
 ### Stage 5.b — Master: examples (task2 scenarios 17-24). DONE. See Session 11 (2026-06-26).
 ### INTR 1 — Slot-based programming retrofit. DONE. See Sessions 12-13 (2026-06-27). Plan version 012 created.
 ### Stage 6 — Cancellation + Shutdown (task2 scenarios 3-16). DONE. See Session 16 (2026-06-27). 121/121 tests.
-
-**Key findings (Stage 6)**:
-- Test 14 required two mailboxes to avoid a race: `mbh_listen` (empty, guarantees block) and `mbh_data` (pre-loaded). Pre-loading items in the listen mailbox let the worker receive before cancel fired.
-- `io.recancel()` called on the mailbox's bound `io` (master's io) correctly re-arms the cancellation state. Workers pass `io` via context structs since worker function signatures do not expose their own `io`.
-- `pool.put` / `mailbox.close` / `pool.close` are cancel-protected (`lockUncancelable`) — verified in tests 13-14.
-- `io.checkCancel()` fires at the next cancellation point from a CPU-bound loop — verified in test 16.
-
----
-
-### Stage 7 — Event Sources (Select / Future)
-
-**Purpose**: bridge blocking mailbox/pool into `Io.Select` and `Io.Future`.
-
-**What to build** (api-reference-013.md event source helpers)
-- `mailbox.ReceiveResult`, `mailbox.receive_future`.
-- `pool.PoolResult`, `pool.get_wait_future`.
-- Result by value inside the union — no `*Slot` crosses threads.
-- Cancel returns `.canceled`; never closes.
-- `error.ConcurrencyUnavailable` on single-threaded backends.
-
-**Scenarios**: task2 scenarios 25-31, 42-56.
-
-**Prologue**: ask owner whether he wants an audit before Stage 7.
-
-**Execution checklist**
-
-- [ ] Step 0 — Prologue: audit or skip?
-- [ ] Step 1 — Read api-reference-013.md event source helpers section.
-- [ ] Step 2 — Implement `mailbox.receive_future` + `mailbox.ReceiveResult`.
-- [ ] Step 3 — Implement `pool.get_wait_future` + `pool.PoolResult`.
-- [ ] Step 4 — Write `tests/layer4_select.zig` (scenarios 25-31, 42-56).
-- [ ] Step 5 — Wire into `tests/matryoshka_tests.zig`.
-- [ ] Step 6 — `kitchen/build_and_test_debug.sh` — pass.
-- [ ] Step 7 — `kitchen/build_and_test_all.sh` — pass (all 4 modes).
-- [ ] Step 8 — `kitchen/build_cross_debug.sh` — pass.
-- [ ] Step 9 — Post-stage cleanup.
-- [ ] Step 10 — AI-sh + banned words scan.
-- [ ] Step 11 — Update `design/STATUS.md`.
-- [ ] Step 12 — Create `design/matryoshka-zig-implementation-plan-014.md`.
-
-**Checkpoint**
-- Single-threaded returns `error.ConcurrencyUnavailable`.
-- Cancel/close separation proven.
-- All kitchen scripts pass.
+### INTR 2 — Thread-safe hooks + multi-thread example. DONE. See Session 17 (2026-06-28). Plan version 014 created.
+### Stage 7.a — Event sources: implementation. DONE. See Session 18 (2026-06-28). 121/121 tests.
+### INTR 3 — ASCII ownership diagrams retrofit (all 29 existing examples). DONE. See Session 18 (2026-06-28). 121/121 tests.
+### Stage 7.b — Event sources: examples (scenarios 25-31, 42-56). DONE. See Session 19 (2026-06-28). 143/143 tests.
 
 ---
 
@@ -381,5 +349,5 @@ Totals: 94 task1 (Stages 1-4), 61 task2 (Stages 5-8).
 | Doc | Owns |
 |-----|------|
 | collected-context-003.md | Master reference. Paths, proposals, decisions, open items, Stages 0-5 + INTR 1 summary. |
-| matryoshka-api-reference-013.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, thread-safety, complexity. Wins over all other sources. |
+| matryoshka-api-reference-014.md | **Primary source of truth.** Signatures, types, error sets, cancel contract, ownership lifecycle, PolyHelper (create/destroy/no_create_destroy), slot-based programming, cooperative cleanup patterns, tag identity, infra transport patterns, thread-safety, complexity, hook concurrency contract, receiveResult/getWaitResult/receive_future/get_wait_future. Wins over all other sources. |
 | matryoshka-zig-0.16-implementation-guide-001.md | **OLD — verify all details against API reference before use.** Zig how-to patterns: struct layout, condition_waitTimeout, cancel mechanics, Odin→Zig appendix. |

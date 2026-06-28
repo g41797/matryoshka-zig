@@ -31,7 +31,7 @@
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-zig-implementation-plan-014.md
+- Plan: matryoshka-zig-implementation-plan-016.md
 
 ## Participants
 - Owner(g41797-human): design, decision-making
@@ -96,10 +96,114 @@ Stage 5.b — DONE (107/107 tests).
 INTR 1 — DONE (107/107 tests). Plan version 011 created.
 Stage 6 — DONE (121/121 tests). Plan version 013 created.
 INTR 2 — DONE (121/121 tests). Plan version 014 created.
-Current: INTR 2 complete. CappedPoolCtx thread-safe; hook concurrency documented in api-reference-014.
-Next: Stage 7 — Select + Future APIs. Show intent first.
+Stage 7.a — DONE (121/121 tests). receiveResult/receive_future/getWaitResult/get_wait_future added to src/.
+INTR 3 — DONE (121/121 tests). ASCII ownership diagrams added to all 29 existing examples. Plan version 015 created.
+Stage 7.b — DONE (143/143 tests). 22 new example files + test wrappers. Plan version 016 created.
+Current: Stage 7.b complete. Next: Stage 8 — Mailbox-less patterns + cross-layer. Show intent first.
 
 ## Session Log
+
+### 2026-06-28 — Session 19 (Stage 7.b — Event source examples)
+**Participants**: human + Claude
+
+**Summary**
+Stage 7.b complete. 22 new example files under `examples/layer4/` covering scenarios 25-31 and 42-56.
+22 test wrappers in `tests/layer4_select.zig`.
+
+Key patterns demonstrated:
+- `std.Io.Select(U)` with mailbox, pool, and timer sources.
+- Re-spawn pattern: re-call `sel.concurrent()` after each item.
+- Graceful cancel: `while (sel.cancel()) |r|` loop for item recovery.
+- `cancelDiscard()` for timer-only shutdown.
+- `sel.queue.putOneUncancelable()` for direct push from wild threads.
+- `receive_future` / `get_wait_future` awaited directly (no Select needed).
+- Fan-in, fan-out, producer-consumer-recycle, circular job pool patterns.
+
+Fixes during verification:
+- `job_pool_circular.zig`: `WorkerCtx` moved to `run()` scope (was local to switch case — use-after-free).
+- `select_cancel_master_decides.zig`: rewritten to start with empty mailboxes (was non-deterministic — mbh2 delivered before timer in some runs).
+- `future_single_threaded.zig`: `_ = err` → `|_|` (error set discarded).
+- `job_pool_circular.zig`: `var worker_fut` → `const worker_fut` (never mutated).
+- `select_mixed_sources.zig`: `.id` → `.value` (Sensor struct uses `value: f64`, not `id`).
+- `select_two_mailboxes.zig`: "draining" → "being emptied" (banned word).
+
+**Changes**
+- `examples/layer4/select_two_mailboxes.zig` — scenario 25
+- `examples/layer4/select_cancel_close.zig` — scenario 26
+- `examples/layer4/select_cancel_master_decides.zig` — scenario 27
+- `examples/layer4/select_mixed_sources.zig` — scenario 28
+- `examples/layer4/select_cancel_recycle.zig` — scenario 29
+- `examples/layer4/mailbox_timeout.zig` — scenario 30
+- `examples/layer4/select_graceful_shutdown.zig` — scenario 31
+- `examples/layer4/select_mailbox_event.zig` — scenario 42
+- `examples/layer4/select_direct_push.zig` — scenario 43
+- `examples/layer4/select_mailbox_close.zig` — scenario 44
+- `examples/layer4/select_mailbox_cancel.zig` — scenario 45
+- `examples/layer4/select_pool_event.zig` — scenario 46
+- `examples/layer4/select_job_pool.zig` — scenario 47
+- `examples/layer4/select_mailbox_pool_timer.zig` — scenario 48
+- `examples/layer4/receive_future_direct.zig` — scenario 49
+- `examples/layer4/get_wait_future_direct.zig` — scenario 50
+- `examples/layer4/receive_future_timeout.zig` — scenario 51
+- `examples/layer4/future_single_threaded.zig` — scenario 52
+- `examples/layer4/pool_fan_in.zig` — scenario 53
+- `examples/layer4/pool_fan_out.zig` — scenario 54
+- `examples/layer4/producer_consumer_recycle.zig` — scenario 55
+- `examples/layer4/job_pool_circular.zig` — scenario 56
+- `examples/layer4/layer4.zig` — added 22 new re-exports
+- `tests/layer4_select.zig` — new file: 22 test wrappers
+- `tests/matryoshka_tests.zig` — added `@import("layer4_select.zig")`
+- `design/matryoshka-zig-implementation-plan-016.md` — new version; Stage 7.b collapsed; Stage 8 in full detail
+- `design/context.md` — plan → 016
+- `design/STATUS.md` — sources → 016; stages + this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `build_and_test_debug.sh` | 143/143 pass |
+| `build_and_test_all.sh` | 143/143 pass (all 4 modes) |
+| `build_cross_debug.sh` | 5/5 steps pass (macOS x86_64, aarch64, Windows x86_64) |
+| Post-stage cleanup | 5 fixes during verification (listed above) |
+| AI-sh + banned words scan | "draining" found and replaced; no other violations |
+
+**Next**: Stage 8 — Mailbox-less patterns + cross-layer. Show intent first.
+
+---
+
+### 2026-06-28 — Session 18 (Stage 7.a + INTR 3 — Event source helpers + diagram retrofit)
+**Participants**: human + Claude
+
+**Summary**
+Stage 7.a: added event source helper API to `src/mailbox.zig` and `src/pool.zig`.
+INTR 3: added ASCII ownership circuit diagrams to all 29 existing example files.
+
+Key decisions:
+- Scenario 43 (socket) replaced with direct-push pattern (`select_direct_push.zig`) — CappedPool + wild thread + `putOneUncancelable`.
+- ASCII diagrams declared a MUST rule for every example file.
+- INTR 3 added as a retrofit pass before Stage 7.b.
+
+**Changes**
+- `src/mailbox.zig` — added `ConcurrentError`, `ReceiveResult`, `receiveResult`, `receive_future`
+- `src/pool.zig` — added `ConcurrentError`, `PoolResult`, `getWaitResult`, `get_wait_future`
+- All 29 existing example files — ASCII ownership diagram added at top
+- `design/matryoshka-zig-implementation-plan-015.md` — new version; Stage 7.a + INTR 3 collapsed as DONE; Stage 7.b in full detail
+- `design/context.md` — plan → 015
+- `design/STATUS.md` — sources → 015; stages + this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `build_and_test_debug.sh` | 121/121 pass |
+| `build_and_test_all.sh` | 121/121 pass (all 4 modes) |
+| `build_cross_debug.sh` | 5/5 steps pass (macOS x86_64, aarch64, Windows x86_64) |
+| Post-stage cleanup | diagrams added to all examples; no obsolete code |
+| AI-sh + banned words scan | no violations found |
+
+**Next**: Stage 7.b — Event source examples (scenarios 25-31, 42-56). Show intent first.
+
+---
 
 ### 2026-06-28 — Session 17 (INTR 2 — Thread-safe hooks + multi-thread example)
 **Participants**: human + Claude

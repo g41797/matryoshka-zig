@@ -16,6 +16,7 @@ test {
     _ = @import("layer4_examples.zig");
     _ = @import("layer4_master.zig");
     _ = @import("layer4_cancel.zig");
+    _ = @import("layer4_select.zig");
 }
 
 const std = @import("std");
