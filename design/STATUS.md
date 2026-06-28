@@ -31,7 +31,7 @@
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-zig-implementation-plan-017.md
+- Plan: matryoshka-zig-implementation-plan-017.md (018 pending)
 
 ## Participants
 - Owner(g41797-human): design, decision-making
@@ -100,7 +100,8 @@ Stage 7.a — DONE (121/121 tests). receiveResult/receive_future/getWaitResult/g
 INTR 3 — DONE (121/121 tests). ASCII ownership diagrams added to all 29 existing examples. Plan version 015 created.
 Stage 7.b — DONE (143/143 tests). 22 new example files + test wrappers. Plan version 016 created.
 INTR 4 — DONE (145/145 tests). Bug fixes + doc corrections. api-reference-015 created.
-Current: INTR 4 complete. Next: Stage 8 — Mailbox-less patterns + cross-layer. Show intent first.
+Stage 8 — DONE (160/160 tests). 15 new examples: cross-layer (32–41) + mailbox-less (57–61). layer4_cross.zig created.
+Current: Stage 8 complete. Next: Plan version 018.
 
 ## Session Log
 
@@ -148,6 +149,57 @@ Three correctness bugs fixed in `src/pool.zig` and `src/mailbox.zig`. Six doc co
 | AI-sh + banned words scan | clean after fixes |
 
 **Next**: Stage 8 — Mailbox-less patterns + cross-layer. Show intent first.
+
+---
+
+### 2026-06-28 — Stage 8 (Cross-layer + Mailbox-less patterns)
+**Participants**: human + Claude
+
+**Summary**
+Stage 8 complete. 15 new example files under `examples/layer4/` covering scenarios 32–41 (cross-layer) and 57–61 (mailbox-less). 15 test wrappers in `tests/layer4_cross.zig`.
+
+**New examples (cross-layer, scenarios 32–41)**
+
+- `cross_layer_pool_mailbox_roundtrip.zig` (32) — pool→mailbox→pool, same pointer on recycled get
+- `cross_layer_mixed_types_mailbox.zig` (33) — Event + Sensor through shared mailbox, dispatch on tag
+- `cross_layer_batch_receive_pool_return.zig` (34) — receive_batch → put_all, stdlib list bridges layers
+- `cross_layer_pool_hooks_mailbox_flow.zig` (35) — on_get creates, on_put decides keep/destroy (CappedPoolCtx)
+- `cross_layer_close_pool_then_mailbox.zig` (36) — close pool first (on_close frees), then mailbox.close
+- `cross_layer_close_mailbox_then_pool.zig` (37) — close mailbox first, return items to pool while open
+- `cross_layer_pool_mailbox_flow.zig` (38) — pool→mailbox→pool single-thread ownership circuit
+- `master_shutdown_stdlib_cleanup.zig` (39) — close both, walk lists via popFirst, no framework cleanup API
+- `master_batch_drain_receive_to_pool.zig` (40) — receive_batch list passed directly to put_all
+- `master_multi_mailbox_collect.zig` (41) — concatByMoving two mailbox close lists, walk combined
+
+**New examples (mailbox-less, scenarios 57–61)**
+
+- `mailbox_less_pool_future_worker.zig` (57) — pool + io.concurrent Future, no mailbox
+- `mailbox_less_pool_select_scheduler.zig` (58) — pool + Select + timer job scheduler, no mailbox
+- `mailbox_less_pool_group_workers.zig` (59) — pool + Io.Group workers, group.cancel stops all
+- `mailbox_less_pool_select_network.zig` (60) — pool + Select + mock network, two event sources
+- `mailbox_less_to_mailbox_transition.zig` (61) — fan-in from N clients shows when mailbox is needed
+
+**Changes**
+- `examples/layer4/layer4.zig` — 15 new pub const re-exports
+- `tests/layer4_cross.zig` — 15 new test wrappers (new file)
+- `tests/matryoshka_tests.zig` — import layer4_cross.zig added
+- `design/STATUS.md` — this entry
+
+**Bug fixes during development**
+- Scenario 34 and 40 verification loops: get+put cycling same item causes infinite loop. Fixed: single get+put instead of unbounded while loop.
+- Scenario 59 worker loop: AlwaysCreateCtx.onPut keeps items → worker never truly blocks → group.cancel cannot inject error.Canceled. Fixed: worker processes one item and exits; blocked workers get error.Canceled.
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| `build_and_test_debug.sh` | 160/160 pass |
+| `build_and_test_all.sh` | 160/160 pass (all 4 modes) |
+| `build_cross_debug.sh` | 5/5 steps pass |
+| AI-sh + banned words scan | "drain" × 2 found and replaced |
+| Post-stage cleanup | no obsolete code found |
+
+**Next**: Plan version 018. Stage 8 complete.
 
 ---
 
