@@ -1,6 +1,10 @@
 # Collected Context for Matryoshka Zig Implementation (v004)
 
-v004 adds: updated project state (Stages 6-8 + INTR 1-4 done, 160/160 tests), matryoshka thinking model, three-category model (tests/examples/stories), story template, INTR 5 pilot plan. Supersedes v003.
+v004 holds project state only: stages, test counts, slot rule, idiom patterns, Io primitives, bug fixes, open items, key decisions. Supersedes v003.
+
+Model and rules moved to permanent docs:
+- [matryoshka-model.md](matryoshka-model.md) — thinking model, three-category model, story structure.
+- [rules.md](rules.md) — coding, doc, and process rules.
 
 ---
 
@@ -33,7 +37,7 @@ v004 adds: updated project state (Stages 6-8 + INTR 1-4 done, 160/160 tests), ma
 ### Working Folder
 - `/home/g41797/dev/root/github.com/g41797/matryoshka-zig/design/`
 - Current API reference: `matryoshka-api-reference-015.md` — source of truth. Wins over all other sources.
-- Current plan: `matryoshka-zig-implementation-plan-017.md` (018 pending after INTR 5)
+- Current plan: `matryoshka-zig-implementation-plan-018.md` (slim, state-only; rules in `rules.md`)
 - This document: `collected-context-004.md`
 
 ---
@@ -124,164 +128,13 @@ matryoshka-zig/
 
 ---
 
-## The Matryoshka Thinking Model
+## Model and Rules — Moved
 
-This is the mental model every story must demonstrate. Examples show how to use an API. Stories show how to reason with it.
+The thinking model, three-category model, and story structure moved to permanent docs.
+- [matryoshka-model.md](matryoshka-model.md) — thinking model, three-category model, story structure.
+- [rules.md](rules.md) — coding, doc, and process rules.
 
-### The Core Question
-
-Every Matryoshka design starts here:
-
-> Who owns this item right now?
-
-Not "what data does this item hold." Not "which thread processes it." Just: who owns it.
-
-Ownership is visible at the call site. If you have to read the implementation to know who owns an item, the design is wrong.
-
-### Ownership Moves. It Never Duplicates.
-
-An item has exactly one owner at any moment. Ownership belongs to:
-- User code (IN_FLIGHT: you must do something with it)
-- Mailbox (HELD: mailbox will deliver it)
-- Pool (HELD: pool will reuse it)
-
-When ownership transfers, the slot becomes null. The null is the proof of transfer. `slot.* = null` is not a bookkeeping detail — it is the ownership protocol.
-
-### Route State, Not Data
-
-The key insight that separates Matryoshka from ordinary queues:
-
-**Wrong**: put raw data into a queue, process it, produce results.
-
-**Right**: route the object that carries state. The object moves. Whoever holds it has exclusive ownership — and exclusive access.
-
-Video transcoder example:
-- 10,000 camera streams. 64 workers. Each stream needs sequential encoding state.
-- Wrong approach: queue individual frames. Workers race over frames from the same stream.
-- Right approach: `StreamContext` carries the encoder state. The mailbox routes `StreamContext` objects. A worker that receives a context owns it entirely — no locks needed during encoding.
-
-The routing gives lock-freedom. Not a lock-free algorithm. Just: one owner at a time.
-
-### Pool Availability Is a Signal
-
-A pool that is empty is not just an error condition. It is a backpressure signal.
-
-When the network ingest waits for a `VideoBuffer` from the pool:
-- Workers are busy. Buffers are in use.
-- The ingest naturally pauses. No explicit backpressure code.
-- When a worker returns a buffer to the pool, the pool fires an event.
-- The ingest resumes.
-
-`pool.getWaitResult` inside an `Io.Select` loop makes pool availability a first-class event source. The same loop handles network data and buffer availability. Whichever arrives first drives the next action.
-
-### Layers Compose. Stop When You Have Enough.
-
-Each layer adds exactly one capability:
-
-```text
-PolyNode           who owns this item?
-  +
-Mailbox            how does ownership move?
-  +
-Pool               should this item be reused or destroyed?
-  +
-Master             who coordinates startup, shutdown, cancellation, policy?
-```
-
-A system that only needs ownership and movement: use PolyNode + Mailbox. Stop there.
-
-A system that needs backpressure and reuse: add Pool.
-
-A system that needs coordination: add Master.
-
-The ownership model never changes. Only capabilities are added.
-
-### Cancel and Close Are Different
-
-- `error.Canceled` — the Io scheduler says: stop now. External signal. Not a Master decision.
-- `mailbox.close` / `pool.close` — the Master says: this subsystem is shutting down.
-
-Cancel does not trigger close. The Master decides when to close, based on its policy. A worker that gets `error.Canceled` reports it. The Master decides what to do.
-
-### Master Is a Concept, Not a Type
-
-Master = the coordination boundary. The place where:
-- startup order is decided
-- shutdown order is decided
-- cancellation policy lives
-- resource ownership is tracked
-
-There is no required Master struct. There is no required interface. Different subsystems implement Master differently. The responsibility matters. The structure does not.
-
----
-
-## Three-Category Model
-
-Tests, examples, and stories have different jobs.
-
-### Tests
-- Check correctness.
-- One behavior at a time.
-- Edge cases, error paths, state transitions, contract violations.
-- Scope: one API call or one invariant.
-
-### Examples
-- Show how to use one pattern.
-- One API interaction, one layer.
-- "How to seed a pool." "How to do fan-in."
-- Reader learns: what to call and in what order.
-
-### Stories
-- Show how to think with Matryoshka.
-- Multiple layers composing into a system.
-- Start from a real domain problem. Translate to Matryoshka patterns. Implement.
-- Reader learns: how to reason about a new problem using ownership thinking.
-
-A story is not a large example. It is a different kind of artifact entirely.
-
----
-
-## Story Structure
-
-Each story is a mini-project with two artifacts.
-
-### Narrative (design/stories/story-name-001.md)
-
-Four parts:
-
-**Part 1 — Arch Design**
-- Domain problem statement.
-- Architect dialogue: constraints, tradeoffs, decisions.
-- Result: bounded scope, defined boundaries.
-
-**Part 2 — SRS (Software Requirements Specification)**
-- Numbered requirements, one per bullet.
-- Domain language, not Matryoshka language.
-- "The system must reuse video buffers to prevent fragmentation."
-
-**Part 3 — Matryoshka Translation**
-- Map each requirement to a Matryoshka concept.
-- Programmer dialogue preferred. Shows the reasoning, not just the result.
-- "Requirement 2 maps to Pool. Requirement 3 maps to pool.getWaitResult inside Io.Select."
-
-**Part 4 — Flow Diagram**
-- Full system ASCII diagram.
-- Shows all layers, all ownership flows, all event sources.
-- No prose. Diagram only.
-
-### Code (stories/story-name/story-name.zig)
-
-- `pub fn run(allocator: std.mem.Allocator, io: std.Io) !void`
-- Full implementation of the story.
-- All actors, all layers, graceful shutdown.
-- ASCII ownership circuit diagram at top of file (same rule as examples).
-- Test wrapper in `tests/stories_test.zig`.
-
-### Test Wrapper (tests/stories_test.zig)
-
-- Single file, all story wrappers.
-- Same pattern as `layer4_cross.zig` wrappers.
-- Uses `std.Io.Threaded.init`.
+This document keeps project state only.
 
 ---
 

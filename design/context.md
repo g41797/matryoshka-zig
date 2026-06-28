@@ -9,9 +9,15 @@ API reference: [matryoshka-api-reference-015.md](matryoshka-api-reference-015.md
 
 Architecture: [matryoshka-architecture-001.md](matryoshka-architecture-001.md) — why matryoshka exists, concept progression, flows, layers
 
-Latest context: [collected-context-004.md](collected-context-004.md)
+Latest context: [collected-context-004.md](collected-context-004.md) — project state only
 
-Rules and plan: [matryoshka-zig-implementation-plan-017.md](matryoshka-zig-implementation-plan-017.md) — Section 0 (Sources), Section 1 (Process Rules + Build Order Rules), stages
+Thinking model: [matryoshka-model.md](matryoshka-model.md) — ownership mantra, three-category model, story structure
+
+Rules: [rules.md](rules.md) — coding, doc, and process rules (permanent, non-versioned)
+
+Plan: [matryoshka-zig-implementation-plan-018.md](matryoshka-zig-implementation-plan-018.md) — slim state-only plan; rules live in rules.md
+
+Docs plan: [matryoshka-zig-docs-plan-001.md](matryoshka-zig-docs-plan-001.md) — documentation work plan (stories, examples-as-docs, README, autodocs)
 
 Tests (Layers 1-3): [task1-tests-001.md](task1-tests-001.md) — 73 scenarios (Layer1: 1-20, Layer2: 26-52, Layer3: 63-88), correctness/edge cases/contract violations
 

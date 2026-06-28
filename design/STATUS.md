@@ -31,7 +31,10 @@
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-zig-implementation-plan-017.md (018 pending)
+- Plan: matryoshka-zig-implementation-plan-018.md (slim, state-only)
+- Rules: rules.md (permanent, non-versioned)
+- Thinking model: matryoshka-model.md (permanent, non-versioned)
+- Docs plan: matryoshka-zig-docs-plan-001.md
 
 ## Participants
 - Owner(g41797-human): design, decision-making
@@ -101,9 +104,53 @@ INTR 3 — DONE (121/121 tests). ASCII ownership diagrams added to all 29 existi
 Stage 7.b — DONE (143/143 tests). 22 new example files + test wrappers. Plan version 016 created.
 INTR 4 — DONE (145/145 tests). Bug fixes + doc corrections. api-reference-015 created.
 Stage 8 — DONE (160/160 tests). 15 new examples: cross-layer (32–41) + mailbox-less (57–61). layer4_cross.zig created.
-Current: Stage 8 complete. Next: Plan version 018.
+INTR 5 — Stories + doc infrastructure. Pilot code complete (compiles; story test runtime not yet confirmed). Doc infrastructure created. Plan version 018 created.
+Current: INTR 5 doc infrastructure complete. Next: verify story test green, then Stage 9.
 
 ## Session Log
+
+### 2026-06-28 — INTR 5 (Stories + documentation infrastructure)
+**Participants**: human + Claude
+
+**Summary**
+Stories infrastructure created with a pilot (video transcoder). Permanent documentation infrastructure created: model, rules, docs plan, slim implementation plan.
+
+**Stories infrastructure (pilot)**
+- `stories/stories.zig` — stories module root; re-exports `video_transcoder`.
+- `stories/video_transcoder/video_transcoder.zig` — pilot story; `pub fn run(allocator, io) !void`.
+- `design/stories/video-transcoder-001.md` — narrative; 4 parts present.
+- `tests/stories_test.zig` — single story test wrapper; uses `Io.Threaded.init`.
+
+**Documentation infrastructure (this task)**
+- `design/matryoshka-model.md` — new permanent doc: thinking model, three-category model, story structure.
+- `design/rules.md` — new permanent doc: all coding, doc, and process rules.
+- `design/matryoshka-zig-docs-plan-001.md` — new: documentation work plan.
+- `design/matryoshka-zig-implementation-plan-018.md` — new slim plan; state only; references rules.md.
+
+**Changes**
+- `design/matryoshka-model.md` — new
+- `design/rules.md` — new
+- `design/matryoshka-zig-docs-plan-001.md` — new
+- `design/matryoshka-zig-implementation-plan-018.md` — new
+- `design/collected-context-004.md` — trimmed: thinking model, three-category model, story structure sections moved to matryoshka-model.md; links added at top
+- `design/context.md` — references model, rules, plan-018, docs-plan-001
+- `design/STATUS.md` — sources → plan-018 + permanent docs; stages line; this entry
+
+**State**
+- Story test compile-verified. Runtime not yet confirmed.
+- Doc-only task. No `.zig`, `build.zig`, `src/`, `tests/`, `stories/`, or `examples/` files modified.
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| Kitchen scripts | not run — doc-only task |
+| Post-stage cleanup | doc-only — no code to clean |
+| AI-sh + banned words scan | new docs authored clean of banned/AI-sh list |
+
+**Next**: verify story test green across all kitchen scripts, then Stage 9 — README + autodocs.
+
+---
 
 ### 2026-06-28 — INTR 4 (Bug fixes + doc corrections from foreign-advices-003)
 **Participants**: human + Claude

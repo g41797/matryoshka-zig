@@ -78,6 +78,7 @@ const VideoBufCtx = struct {
         const self: *VideoBufCtx = @ptrCast(@alignCast(ctx));
         while (list.popFirst()) |node| {
             const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
+            polynode.reset(poly);
             var s: Slot = poly;
             VideoBufferPolyHelper.destroy(self.alloc, &s);
         }
@@ -175,16 +176,8 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     // (closed and destroyed explicitly during shutdown below)
 
     // Storage mailbox: encoded segments flow from workers to storage task.
+    // Closed explicitly before storage_fut.await — cannot use defer (would deadlock).
     const storage_mbh: MailboxHandle = try mailbox.new(io, allocator);
-    defer {
-        var rem: std.DoublyLinkedList = mailbox.close(storage_mbh);
-        while (rem.popFirst()) |node| {
-            const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
-            var s: Slot = poly;
-            EncodedSegmentPolyHelper.destroy(allocator, &s);
-        }
-        mailbox.destroy(storage_mbh, allocator);
-    }
 
     // Start storage task.
     var storage_ctx: StorageCtx = .{ .storage_mbh = storage_mbh, .alloc = allocator };
@@ -255,6 +248,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     var rem: std.DoublyLinkedList = mailbox.close(ready_queue);
     while (rem.popFirst()) |node| {
         const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
+        polynode.reset(poly);
         const sc: *StreamContext = StreamContextPolyHelper.cast(poly).?;
         pool.put(buf_ph, &sc.buffer_slot);
         if (sc.buffer_slot != null) {
@@ -269,9 +263,18 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     mailbox.destroy(ready_queue, allocator);
     std.log.info("workers: all done", .{});
 
-    // Storage task exits when storage_mbh is closed (handled by defer above).
-    // Wait for storage task here.
+    // Close storage mailbox — signals storage task to exit via error.Closed.
+    {
+        var srem: std.DoublyLinkedList = mailbox.close(storage_mbh);
+        while (srem.popFirst()) |node| {
+            const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
+            polynode.reset(poly);
+            var s: Slot = poly;
+            EncodedSegmentPolyHelper.destroy(allocator, &s);
+        }
+    }
     storage_fut.await(io) catch {};
+    mailbox.destroy(storage_mbh, allocator);
     std.log.info("storage: done", .{});
 
     try helpers.expect(
