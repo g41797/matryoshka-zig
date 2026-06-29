@@ -459,6 +459,3 @@ Job result.
 Readers already know the story.
 
 They do not need another essay.
-
----
-
