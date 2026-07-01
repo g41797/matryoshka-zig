@@ -9,7 +9,7 @@ How to think before writing a Matryoshka story.
 
 Companion: matryoshka-model-001.md
 Companion: rules-001.md
-Companion: patterns-001.md
+Companion: patterns-002.md
 
 ---
 

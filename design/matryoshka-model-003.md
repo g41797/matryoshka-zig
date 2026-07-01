@@ -2,7 +2,7 @@
 
 The mental model behind every Matryoshka design decision.
 Companion: [rules-003.md](rules-003.md) — the coding and process rules.
-Companion: [patterns-001.md](patterns-001.md) — reusable coding patterns.
+Companion: [patterns-002.md](patterns-002.md) — reusable coding patterns.
 
 ---
 
@@ -198,7 +198,7 @@ Four parts.
 - Full implementation of the story.
 - All actors, all layers, graceful shutdown.
 - ASCII ownership circuit diagram at the top of the file.
-- Code is structured around Masters. See [patterns-001.md](patterns-001.md) for the coding patterns and the Master composition pattern.
+- Code is structured around Masters. See [patterns-002.md](patterns-002.md) for the coding patterns and the Master composition pattern.
 
 ### Test wrapper — `tests/stories_test.zig`
 

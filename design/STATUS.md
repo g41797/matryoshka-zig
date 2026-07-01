@@ -34,7 +34,7 @@
 - Plan: matryoshka-io-implementation-plan-023.md (slim, state-only)
 - Rules: rules-003.md
 - Thinking model: matryoshka-model-003.md
-- Patterns: patterns-001.md
+- Patterns: patterns-002.md
 - Docs plan: matryoshka-io-docs-plan-001.md
 
 ## Participants
@@ -348,12 +348,12 @@ Story 2 hero: ownership transfer as synchronization + OOB for priority signals.
 **Participants**: human + Claude
 
 **Summary**
-Doc quality overhaul. `rules-001.md`, `matryoshka-model-001.md`, `patterns-001.md` created as versioned replacements. Cross-references updated across all docs. `video_transcoder.zig` refactored per the Master composition rule.
+Doc quality overhaul. `rules-001.md`, `matryoshka-model-001.md`, `patterns-002.md` created as versioned replacements. Cross-references updated across all docs. `video_transcoder.zig` refactored per the Master composition rule.
 
 **New docs**
 - `design/rules-001.md` — versioned replacement for `rules.md`. Adds: code-quality-all-categories section; story structure Master composition rule; patterns-scan step in per-stage checklist; versioning fix ("any doc", no "important"); Matryoshka Coding Patterns pointer.
-- `design/matryoshka-model-001.md` — versioned copy of `matryoshka-model.md`. Companion links → `rules-001.md` + `patterns-001.md`. Story-structure code section references `patterns-001.md`. "Permanent doc. Not versioned." removed.
-- `design/patterns-001.md` — new pattern catalog. Pool modes/seeding/backpressure/hooks, Io.Select loop, Io.Group, graceful shutdown sequence, polymorphic dispatch, error handling on receive, Master composition. All patterns grounded in real examples.
+- `design/matryoshka-model-001.md` — versioned copy of `matryoshka-model.md`. Companion links → `rules-001.md` + `patterns-002.md`. Story-structure code section references `patterns-002.md`. "Permanent doc. Not versioned." removed.
+- `design/patterns-002.md` — new pattern catalog. Pool modes/seeding/backpressure/hooks, Io.Select loop, Io.Group, graceful shutdown sequence, polymorphic dispatch, error handling on receive, Master composition. All patterns grounded in real examples.
 
 **Master composition rule (derived)**
 - A Master is a coordination boundary that owns its resources and coordinates startup/shutdown/cancellation.

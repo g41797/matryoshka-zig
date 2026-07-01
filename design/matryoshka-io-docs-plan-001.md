@@ -57,4 +57,4 @@ Doc review.
 
 - [matryoshka-model-001.md](matryoshka-model-001.md) — thinking model, three-category model, story structure.
 - [rules-001.md](rules-001.md) — coding, doc, and process rules.
-- [patterns-001.md](patterns-001.md) — reusable coding patterns.
+- [patterns-002.md](patterns-002.md) — reusable coding patterns.

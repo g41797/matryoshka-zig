@@ -132,7 +132,7 @@ Reference instead:
 - matryoshka-model-001.md
 - matryoshka-api-reference-015.md
 - rules-001.md
-- patterns-001.md
+- patterns-002.md
 
 ---
 

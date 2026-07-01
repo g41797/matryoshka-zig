@@ -3,28 +3,38 @@
 
 // Ownership (mailbox-less):
 //
-//  pool (1 item seeded)
-//  │ io.concurrent
+//  pool (1 empty container seeded — code=0)
+//  │ io.concurrent (n=3 passed at spawn time)
 //  ▼
-//  worker ──pool.get_wait──► slot (code += 1) ──pool.put──► pool
+//  worker loop (n cycles):
+//    pool.get ──► slot (empty) ──► ev.code = worker counter ──► pool.put ──► pool
 //  │
-//  fut.await ──► master verifies pool has 1 item
+//  fut.await ──► master reads ctx.counter (= n after all cycles)
 //  pool.close ──► on_close ──► freed
 //
-//  No mailbox. Pool + Future is sufficient for simple single-worker coordination.
+//  Work input: spawn-time arg n + worker's own counter.
+//  Pool item is an empty container — a processing slot, not a data carrier.
+//  No mailbox needed for simple single-worker coordination.
+
+const N: usize = 3; // iteration count passed to worker at spawn time
 
 const WorkerCtx = struct {
     ph: PoolHandle,
     tag: *const anyopaque,
+    n: usize,
+    counter: usize = 0,
 };
 
 fn workerFn(ctx: *WorkerCtx) anyerror!void {
-    var slot: Slot = null;
-    try pool.get_wait(ctx.ph, ctx.tag, &slot, null);
-    defer pool.put(ctx.ph, &slot);
-    const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-    ev.code += 1;
-    std.log.info("worker: got slot from pool, code now {d} — putting back", .{ev.code});
+    for (0..ctx.n) |_| {
+        var slot: Slot = null;
+        try pool.get_wait(ctx.ph, ctx.tag, &slot, null);
+        defer pool.put(ctx.ph, &slot);
+        const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
+        ev.code = @intCast(ctx.counter); // write counter into empty container
+        ctx.counter += 1;
+        std.log.info("worker: cycle {d} — wrote counter into empty container (code={d})", .{ ctx.counter, ev.code });
+    }
 }
 
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
@@ -37,29 +47,19 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         pool.destroy(ph, allocator);
     }
 
-    // Seed pool with 1 item (code=0).
+    // Seed 1 empty container — code=0, no work data.
     {
         var slot: Slot = null;
         try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
-        types.EventPolyHelper.cast(slot.?).?.code = 0;
         pool.put(ph, &slot);
     }
-    std.log.info("master: seeded pool, spawning worker", .{});
 
-    var ctx: WorkerCtx = .{ .ph = ph, .tag = types.EventPolyHelper.TAG };
-    var fut = try io.concurrent(workerFn, .{&ctx});
+    var ctx: WorkerCtx = .{ .ph = ph, .tag = types.EventPolyHelper.TAG, .n = N };
+    var fut: std.Io.Future(anyerror!void) = try io.concurrent(workerFn, .{&ctx});
     try fut.await(io);
-    std.log.info("master: worker done", .{});
 
-    // Verify pool has the item back (code incremented by worker).
-    {
-        var slot: Slot = null;
-        defer pool.put(ph, &slot);
-        try pool.get(ph, types.EventPolyHelper.TAG, .available_only, &slot);
-        const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-        try helpers.expect(error.MailboxLessPoolFutureFailed, ev.code == 1, "worker did not process item");
-        std.log.info("done: pool item code={d} — Pool+Future, no mailbox", .{ev.code});
-    }
+    try helpers.expect(error.MailboxLessPoolFutureFailed, ctx.counter == N, "wrong cycle count");
+    std.log.info("done: worker completed {d} cycles — counter={d}, pool item was empty container, no mailbox needed", .{ N, ctx.counter });
 }
 
 const helpers = @import("helpers");

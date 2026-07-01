@@ -3,7 +3,7 @@
 Versioned doc. Replaces [rules-002.md](rules-002.md).
 All coding, doc, and process rules for the project.
 Companion: [matryoshka-model-003.md](matryoshka-model-003.md) — the thinking model.
-Companion: [patterns-001.md](patterns-001.md) — reusable coding patterns.
+Companion: [patterns-002.md](patterns-002.md) — reusable coding patterns.
 
 ---
 
@@ -270,7 +270,7 @@ Banned words.
 
    * `matryoshka-model-003.md`
    * `rules-003.md`
-   * `patterns-001.md`
+   * `patterns-002.md`
 
 * When extending an existing document:
 
@@ -290,7 +290,7 @@ Per-stage finish checklist.
 3. `kitchen/build_cross_debug.sh` — cross-compile Debug for mac + windows.
 4. Post-stage cleanup: revise code for obsolete parts, wrong comments, repeated code that can be extracted.
 5. Re-run all three kitchen scripts after cleanup.
-6. After kitchen scripts pass: scan changed `.zig` files for patterns not yet in `patterns-001.md`.
+6. After kitchen scripts pass: scan changed `.zig` files for patterns not yet in `patterns-002.md`.
    - Report candidate new patterns to owner. Owner decides.
    - Do not auto-document or auto-extract. Report only.
 7. AI-sh + banned words scan over changed `*.md` and `*.zig`. Report to owner.
@@ -350,7 +350,7 @@ Implementation invariants.
 
 ## Matryoshka Coding Patterns
 
-The pattern catalog lives in [patterns-001.md](patterns-001.md).
+The pattern catalog lives in [patterns-002.md](patterns-002.md).
 
 - Pool modes, seeding, backpressure, hooks.
 - Io.Select event loop and re-register.

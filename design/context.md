@@ -15,7 +15,7 @@ Thinking model: [matryoshka-model-003.md](matryoshka-model-003.md) — ownership
 
 Rules: [rules-003.md](rules-003.md) — coding, doc, and process rules (+ example completeness rule + Master pattern rule)
 
-Patterns: [patterns-001.md](patterns-001.md) — reusable coding patterns (pool, Select, Group, shutdown, dispatch, Master composition)
+Patterns: [patterns-002.md](patterns-002.md) — reusable coding patterns (pool, Select, Group, shutdown, dispatch, Master composition)
 
 Plan: [matryoshka-io-implementation-plan-023.md](matryoshka-io-implementation-plan-023.md) — slim state-only plan; rules live in rules-003.md
 

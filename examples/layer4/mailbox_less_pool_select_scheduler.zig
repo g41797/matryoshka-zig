@@ -3,21 +3,26 @@
 
 // Ownership (mailbox-less):
 //
-//  pool (3 items seeded)
+//  pool (N_ITEMS empty containers seeded — code=0)
 //  │ getWaitResult         timer (sleepFn)
 //  └──────┬────────────────────────┘
 //         ▼
 //  Select(MasterEvent)
 //  │
-//  .pool_ev .item ──► fill (code++) ──► pool.put ──► pool (re-spawn getWaitResult)
-//  .timer        ──► maintenance log ──► re-spawn timer (until N_ITEMS processed)
+//  .pool_ev .item ──► fill ev.code from Master cycle index ──► pool.put ──► pool
+//                 ──► re-spawn getWaitResult (while cycle < TARGET)
+//                 ──► break (at TARGET, no getWaitResult re-spawned)
+//  .timer         ──► log cycle from Master state ──► re-spawn timer (while cycle < TARGET)
 //  │
-//  sel.cancelDiscard ──► pool.close ──► on_close ──► freed
+//  sel.cancelDiscard ──► timer cancelled (no items in-flight at this point)
+//  pool.close ──► on_close ──► freed
 //
-//  No mailbox. Pool + Select drives job scheduling.
+//  Work input: Master's own cycle counter. Pool item is an empty container — the processing slot.
+//  No mailbox. Pool + Select gates the processing loop.
 
-const TIMER_NS: i96 = 20_000_000; // 20 ms
 const N_ITEMS: usize = 3;
+const TARGET: usize = N_ITEMS * 2; // process each container twice
+const TIMER_NS: i96 = 20_000_000; // 20 ms
 
 const MasterEvent = union(enum) {
     pool_ev: pool.PoolResult,
@@ -38,11 +43,10 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         pool.destroy(ph, allocator);
     }
 
-    // Seed pool with N_ITEMS items.
-    for (0..N_ITEMS) |i| {
+    // Seed pool with N_ITEMS empty containers (code=0 — no work data yet).
+    for (0..N_ITEMS) |_| {
         var slot: Slot = null;
         try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
-        types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
         pool.put(ph, &slot);
     }
 
@@ -56,10 +60,11 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
     try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
 
-    var processed: usize = 0;
+    // Master's own state drives work. Pool item is the empty processing slot.
+    var cycle: usize = 0;
     var ticks: usize = 0;
 
-    while (processed < N_ITEMS) {
+    while (true) {
         const event: MasterEvent = try sel.await();
         switch (event) {
             .pool_ev => |r| switch (r) {
@@ -67,27 +72,34 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
                     var slot: Slot = handle;
                     defer pool.put(ph, &slot);
                     const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-                    ev.code += 100;
-                    processed += 1;
-                    std.log.info("pool_ev: scheduled item code={d} ({d}/{d})", .{ ev.code, processed, N_ITEMS });
-                    if (processed < N_ITEMS) {
+                    ev.code = @intCast(cycle); // fill empty container with cycle index
+                    cycle += 1;
+                    std.log.info("pool_ev: filled container with cycle index={d} ({d}/{d})", .{ ev.code, cycle, TARGET });
+                    if (cycle < TARGET) {
+                        // Re-spawn only while more cycles needed.
+                        // At TARGET, timer is the only in-flight source — cancelDiscard has no item to lose.
                         try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+                    } else {
+                        break;
                     }
                 },
                 .closed, .canceled, .timeout, .not_created => break,
             },
             .timer => {
                 ticks += 1;
-                std.log.info("timer tick {d}: maintenance", .{ticks});
-                try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+                std.log.info("timer tick {d}: maintenance — cycles so far: {d}", .{ ticks, cycle });
+                if (cycle < TARGET) {
+                    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+                }
             },
         }
     }
 
+    // Only the timer may still be in-flight here.
     sel.cancelDiscard();
 
-    try helpers.expect(error.MailboxLessSchedulerFailed, processed == N_ITEMS, "not all items scheduled");
-    std.log.info("done: {d} jobs scheduled, {d} timer ticks — Pool+Select, no mailbox", .{ processed, ticks });
+    try helpers.expect(error.MailboxLessSchedulerFailed, cycle == TARGET, "wrong cycle count");
+    std.log.info("done: {d} cycles scheduled by Master counter, {d} timer ticks — Pool+Select, no mailbox", .{ cycle, ticks });
 }
 
 const helpers = @import("helpers");

@@ -8,7 +8,7 @@ Companion:
 
 * `matryoshka-model-001.md`
 * `rules-001.md`
-* `patterns-001.md`
+* `patterns-002.md`
 
 ---
 

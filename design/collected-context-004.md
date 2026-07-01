@@ -5,7 +5,7 @@ v004 holds project state only: stages, test counts, slot rule, idiom patterns, I
 Model and rules moved to permanent docs:
 - [matryoshka-model-001.md](matryoshka-model-001.md) — thinking model, three-category model, story structure.
 - [rules-001.md](rules-001.md) — coding, doc, and process rules.
-- [patterns-001.md](patterns-001.md) — reusable coding patterns.
+- [patterns-002.md](patterns-002.md) — reusable coding patterns.
 
 ---
 
@@ -134,7 +134,7 @@ matryoshka-io/
 The thinking model, three-category model, and story structure moved to permanent docs.
 - [matryoshka-model-001.md](matryoshka-model-001.md) — thinking model, three-category model, story structure.
 - [rules-001.md](rules-001.md) — coding, doc, and process rules.
-- [patterns-001.md](patterns-001.md) — reusable coding patterns.
+- [patterns-002.md](patterns-002.md) — reusable coding patterns.
 
 This document keeps project state only.
 

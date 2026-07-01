@@ -107,7 +107,7 @@ Carried open items.
 - [rules-003.md](rules-003.md) — all process and coding rules. Source of truth for process.
 - [matryoshka-model-003.md](matryoshka-model-003.md) — thinking model and story structure.
 - [matryoshka-storytelling-001.md](../kitchen/docs/matryoshka-storytelling-001.md) — storytelling philosophy and rhythm rules.
-- [patterns-001.md](patterns-001.md) — reusable coding patterns.
+- [patterns-002.md](patterns-002.md) — reusable coding patterns.
 - [matryoshka-io-docs-plan-001.md](matryoshka-io-docs-plan-001.md) — documentation work plan.
 - `matryoshka-api-reference-015.md` — primary source of truth for signatures, types, errors.
 - `collected-context-004.md` — project state, idiom patterns, Io primitives, bug fixes.
