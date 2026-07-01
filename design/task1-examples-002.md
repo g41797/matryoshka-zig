@@ -1,9 +1,12 @@
-# Task 1 — Example Scenarios for Layers 1–3
+# Task 1 — Example Scenarios for Layers 1–3 (002)
 
 Extracted from `task1-scenarios-001.md`. Scenario numbers preserved.
 
 Examples show real usage patterns, stress-test API in realistic composed ways.
 Each example has a test wrapper.
+
+All scenarios comply with the example completeness rule in [rules-002.md](rules-002.md):
+each example shows origin of work input, what the worker does, and where results go.
 
 Master, Cancel, Futures, Io.Group, and subsystem coordination
 are intentionally excluded. Layers 1–3 must be fully testable without them.

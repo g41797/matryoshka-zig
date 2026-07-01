@@ -1,7 +1,7 @@
-# Matryoshka Zig 0.16 — Staged Implementation Plan (021)
+# Matryoshka Zig 0.16 — Staged Implementation Plan (022)
 
 Slim plan. State only.
-All process and coding rules live in [rules-001.md](rules-001.md). Not repeated here.
+All process and coding rules live in [rules-002.md](rules-002.md). Not repeated here.
 
 - Repo: `matryoshka-io`. Module name: `matryoshka`.
 - Zig 0.16.0. Target backend: `Io.Threaded`.
@@ -42,46 +42,49 @@ INTR 5      Stories + doc infrastructure                    DONE
 STORY 2     Print Server narrative                          DONE
 STORY 1     Video Transcoder narrative rewrite              DONE
 Story Rhythm  Both stories SRS+Translation+Insight          DONE
+EXMPL 1     Example completeness audit + rule addition      DONE
 Stage 9     Docs + README + autodocs                        NEXT
 ```
 
 ---
 
-## 2. Story Rhythm Fixes
+## 2. EXMPL 1 — Example Completeness Audit + Rule Addition
 
-Deliverables.
-- `design/stories/video-transcoder-003.md` — rewritten SRS + Translation + Central Insight.
-- `design/stories/print-server-002.md` — rewritten SRS + Translation + Central Insight.
-- `design/stories/video-transcoder-002.md` — preserved, untouched.
-- `design/stories/print-server-001.md` — preserved, untouched.
+Doc-only stage. No Zig code written. No kitchen scripts needed.
 
-What changed.
-- SRS: flat bullets, one observable fact per bullet. No numbered+bold+prose format.
-- Translation: table of mappings. Requirement label → short bullets of Matryoshka primitives. No P1/P2 dialogue.
-- Central Insight: state the insight, then illustrate with short bullets. No essay.
+New rule added.
+- "Pool items are empty containers" added to `matryoshka-model-002.md` as a Core Principle.
+- "Completeness" block added to `rules-002.md` Coding Rules — Examples section.
+- Rule: an example must show origin of work input, what the worker does, where results go.
+- Pool items are empty containers on acquisition. Work intent comes from outside the pool item.
 
-What stayed.
-- Discussion (Part 1): unchanged in both stories.
-- Flow Diagram (Part 4): unchanged in both stories.
-- Implementation files: untouched.
+Audit results.
+- `task1-examples-002.md`: all 29 scenarios OK. Re-issued with compliance header note only.
+- `task2-examples-002.md`: 7 scenarios revised (46, 47, 53, 56, 57, 58, 59). All others unchanged.
 
-Why.
-- `kitchen/docs/matryoshka-storytelling-001.md` updated with `# Storytelling Rule` section.
-- The section adds explicit rhythm rules for SRS, Translation, Central Insight.
-- Both stories violated those rules — SRS was prose, Translation was dialogue, Insight was an essay.
-- The collection should have one voice and one rhythm throughout.
+Revised scenarios.
+- 46, 47, 56: Master's own pre-loaded state or queue drives work; pool provides container.
+- 53: Master distributes pre-loaded job descriptors via mailbox; workers return results to pool.
+- 57: Spawn-time args + worker's own counter state drive work; pool provides buffer.
+- 58: Master's own cycle counter drives work; pool availability controls concurrency.
+- 59: Spawn-time task index drives work; pool provides result container per worker.
 
-Storytelling rule summary.
-- Discussion: short sentences, questions, negotiation, one idea at a time.
-- SRS: checklist of independently verifiable facts. No explanations.
-- Translation: table of mappings. One requirement → one block of short bullets.
-- Central Insight: state then illustrate. No paragraphs.
+New doc versions created.
+- `design/matryoshka-model-002.md` — new Core Principle added.
+- `design/rules-002.md` — Completeness block added to example rules.
+- `design/task1-examples-002.md` — re-issued, compliance header added.
+- `design/task2-examples-002.md` — 7 scenarios revised.
+
+EXMPL 2 (future).
+- Write corrected `.zig` files for revised scenarios (57, 58, 59 at minimum).
+- Plan separately after Stage 9.
 
 ---
 
 ## 3. Open Items / Next Up
 
 - Stage 9 (README + autodocs) is next. See `matryoshka-io-docs-plan-001.md`.
+- EXMPL 2 (corrected example Zig files) follows Stage 9 or runs in parallel.
 
 Carried open items.
 - 5 — `condition_waitTimeout` workaround (codeberg/zig#31278).
@@ -94,8 +97,8 @@ Carried open items.
 
 ## 4. References
 
-- [rules-001.md](rules-001.md) — all process and coding rules. Source of truth for process.
-- [matryoshka-model-001.md](matryoshka-model-001.md) — thinking model and story structure.
+- [rules-002.md](rules-002.md) — all process and coding rules. Source of truth for process.
+- [matryoshka-model-002.md](matryoshka-model-002.md) — thinking model and story structure.
 - [matryoshka-storytelling-001.md](../kitchen/docs/matryoshka-storytelling-001.md) — storytelling philosophy and rhythm rules.
 - [patterns-001.md](patterns-001.md) — reusable coding patterns.
 - [matryoshka-io-docs-plan-001.md](matryoshka-io-docs-plan-001.md) — documentation work plan.

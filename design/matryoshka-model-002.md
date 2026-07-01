@@ -1,7 +1,7 @@
-# Matryoshka Thinking Model (001)
+# Matryoshka Thinking Model (002)
 
 The mental model behind every Matryoshka design decision.
-Companion: [rules-001.md](rules-001.md) — the coding and process rules.
+Companion: [rules-002.md](rules-002.md) — the coding and process rules.
 Companion: [patterns-001.md](patterns-001.md) — reusable coding patterns.
 
 ---
@@ -53,6 +53,17 @@ Ownership is visible at the call site.
 - One loop handles data and buffer availability together.
 - When a worker returns an item, the pool wakes the waiter and the waiter resumes.
 - No sleep. No poll. No explicit backpressure code.
+
+### Pool items are empty containers
+
+- `pool.get` returns a resource — an empty, reusable container.
+- The container carries no work intent on acquisition.
+- "Empty" means: whatever the previous owner wrote has been consumed or reset.
+- To do useful work, a worker needs at least one additional input:
+  - External data: mailbox message, network read, timer tick, shared counter.
+  - Worker's own accumulated state from previous cycles.
+- A worker that only calls `pool.get` and `pool.put` with no other input source does nothing useful.
+- This applies to examples and stories alike: a pool resource alone is never enough to define a complete pattern.
 
 ### Layers compose
 
@@ -111,6 +122,8 @@ Tests, examples, and stories have different jobs.
 - One API interaction. One layer.
 - "How to seed a pool." "How to do fan-in."
 - Reader learns what to call and in what order.
+- Shows a complete pattern: origin of work input, what the worker does, where results go.
+- An example that shows only lifecycle or shutdown — without a work input source — cannot be used as a template.
 - Part of the docs.
 
 ### Story
@@ -119,6 +132,7 @@ Tests, examples, and stories have different jobs.
 - Multiple layers composing into a real flow.
 - Starts from a real domain problem. Translates to Matryoshka patterns. Implements.
 - Reader learns how to reason about a new problem using ownership thinking.
+- Pool resources in a story must have an explicit work input source — mailbox, network, timer, or worker state.
 - Part of the docs.
 
 A story is not a large example. It is a different kind of artifact.

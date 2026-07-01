@@ -1,9 +1,16 @@
-# Task 2 — Example Scenarios for Layer 4 and Cross-Layer
+# Task 2 — Example Scenarios for Layer 4 and Cross-Layer (002)
 
 Extracted from `task2-scenarios-001.md`. Scenario numbers preserved.
 
 Examples show real usage patterns, stress-test API in realistic composed ways.
 Each example has a test wrapper.
+
+All scenarios comply with the example completeness rule in [rules-002.md](rules-002.md):
+each example shows origin of work input, what the worker does, and where results go.
+
+Pool items are empty containers on acquisition. Work input comes from outside the pool item:
+a mailbox, a timer, a network source, spawn-time arguments, or the worker's own accumulated state.
+See "Pool items are empty containers" in [matryoshka-model-002.md](matryoshka-model-002.md).
 
 All Layer 4 examples use real `Io.Threaded.init(gpa, .{})` — concurrency, cancellation, real I/O.
 
@@ -72,16 +79,18 @@ Master is a concept, not a type. Each example may structure its coordination bou
 
 ## Pool as Select Event Source
 
-46. **Pool get_wait as Select event source** — Master defines event union with `.pool: pool.PoolResult` and `.timer: void`. Spawns via `select.concurrent(.pool, pool.get_wait_select, .{job_pool, JOB_TAG, null})`. When item becomes available, `.pool` fires with `.item`. Master re-spawns event source after handling. `[Proposal 26, pool.get_wait_select, pool availability as event]`
-47. **Job pool pattern** — Worker finishes job, calls `pool.put`. Master has `pool.get_wait_select` as event source in Select. `pool.put` wakes the blocked `get_wait` → adapter returns `.item`. Master fills and submits new work, re-spawns event source. Pool availability drives the work pipeline. `[Proposal 26, job pool pattern, pool as event source]`
-48. **Mixed mailbox + pool event sources in Select** — Master uses Select with `.inbox` (`mailbox.receive_select`), `.pool` (`pool.get_wait_select`), `.timer` (`Io.sleep`). Mailbox delivers commands, pool signals resource availability, timer triggers maintenance. One event loop handles all three. `[Proposal 26, mailbox + pool + timer, unified event loop]`
+46. **Pool get_wait as Select event source** — Master maintains an internal job counter as its own state. Seeds pool with N empty containers at startup. Uses `pool.get_wait_select` + timer in Select. When pool item available, Master fills container with current counter value, increments counter, processes inline, puts item back. Timer triggers maintenance periodically. Pool availability gates the processing loop — no free container, Master waits. Work input: Master's own counter state. Pool provides the processing slot. `[pool as event source, Master-owned state drives work, pool as flow-control]`
+
+47. **Job pool pattern** — Master pre-loads a work queue (stdlib list of job descriptors) before the loop. Seeds pool with N empty containers. When worker finishes and calls `pool.put`, Master's `pool.get_wait_select` event fires. Master pops the next job descriptor from its own queue, fills the returned container with that job's data, sends to worker via mailbox. Pool availability gates job submission. Work input: Master's pre-loaded queue. Pool provides the container that carries job data to the worker. `[Proposal 26, job pool pattern, Master queue drives work, pool as gating resource]`
+
+48. **Mixed mailbox + pool event sources in Select** — Master uses Select with `.inbox` (`mailbox.receive_select`), `.pool` (`pool.get_wait_select`), `.timer` (`Io.sleep`). Mailbox delivers commands (work arrives from external sender), pool signals resource availability (empty container ready for use), timer triggers maintenance. One event loop handles all three. `[Proposal 26, mailbox + pool + timer, unified event loop]`
 
 ---
 
 ## Event Source Futures
 
 49. **receive_future awaited directly** — Master calls `mailbox.receive_future(inbox, null)`, gets `Io.Future(ReceiveResult)`. Calls `fut.await(io)` — blocks until item arrives. No Select needed. Useful for simple single-source coordination. `[Proposal 26, receive_future, direct await]`
-50. **get_wait_future awaited directly** — Master calls `pool.get_wait_future(pool, TAG, null)`, gets `Io.Future(PoolResult)`. Awaits directly. Simple pool acquisition as a future. `[Proposal 26, get_wait_future, direct await]`
+50. **get_wait_future awaited directly** — Master pre-seeds pool with one item. Spawns a worker that calls `pool.get`, processes (increments a counter in its own state), calls `pool.put`. Master calls `pool.get_wait_future(pool, TAG, null)`, gets `Io.Future(PoolResult)`. Awaits directly — blocks until worker returns the item. Worker's own counter drives the work. Pool item is the coordination signal that the item is ready. `[Proposal 26, get_wait_future, direct await, worker-owned state]`
 51. **receive_future with timeout** — Master calls `mailbox.receive_future(inbox, 5 * std.time.ns_per_s)`. Future resolves to `.timeout` if no item within 5 seconds, `.item` if received. `[Proposal 26, receive_future, timeout]`
 52. **ConcurrencyUnavailable on single-threaded** — Master on `global_single_threaded` calls `mailbox.receive_future`. Returns `error.ConcurrencyUnavailable`. Synchronous `mailbox.receive` remains available. `[Proposal 26, single-threaded constraint]`
 
@@ -89,19 +98,26 @@ Master is a concept, not a type. Each example may structure its coordination bou
 
 ## Communication Patterns
 
-53. **Pool fan-in: many workers return** — 3 workers each process items and call `pool.put`. One Master calls `pool.get` to acquire returned items. Verify all 3 items arrive. Ownership flows from many workers into one pool, then to one Master. `[pool fan-in, many put, one get]`
+53. **Pool fan-in: many workers return** — Master pre-loads 3 job descriptors (work assignments). Seeds pool with 3 empty containers. Master gets each container, fills it with one job descriptor from its own list, sends to one of 3 workers (one mailbox per worker). Each worker reads the job from its container, processes it (writes result back), calls `pool.put`. Master calls `pool.get` 3 times to collect results. Ownership: Master's list → pool containers → workers → pool. `[pool fan-in, Master distributes via mailbox, workers return results to pool]`
+
 54. **Pool fan-out: many workers acquire** — Master seeds pool with N items. 3 workers each call `pool.get`. Each gets a different item. No item is shared. Verify N items distributed, pool count decreases correctly. `[pool fan-out, one pool, many get]`
+
 55. **Producer → consumer with recycling** — Pool → Producer fills → Mailbox → Consumer processes → Pool. Full cycle. Verify same item survives the roundtrip. Ownership always clear at each step. `[combined pattern, pool + mailbox circular flow]`
-56. **Job pool circular flow** — Master gets item from pool, fills it, sends to worker via mailbox. Worker processes, puts back to pool. Master uses `pool.get_wait_select` as event source. Verify items cycle continuously. Pool controls the pace. `[job pool, circular ownership, event source]`
+
+56. **Job pool circular flow** — Master pre-loads N job descriptors in its own list. Seeds pool with N empty containers. Uses `pool.get_wait_select` as event source. When pool item available, Master pops next job descriptor from its list, fills the container with that job's data, sends to worker via mailbox. Worker reads job data, writes result into same container, calls `pool.put`. Master's own counter tracks completed jobs. Pool controls the pacing — one container per in-flight job. Work input: Master's pre-loaded list. Pool provides the container. `[job pool, circular ownership, Master list drives work, pool as flow-control]`
 
 ---
 
 ## Mailbox-less Patterns
 
-57. **Pool + Future: simple worker** — Master spawns worker via `io.concurrent`. Worker gets item from pool, processes, puts back. Result returned via `Future.await`. No mailbox involved. Verify item cycles through pool correctly. `[mailbox-less, Pool + Future, simple coordination]`
-58. **Pool + Select: job scheduler** — Master uses `pool.get_wait_select` as event source + timer in Select. When pool item available, Master fills and submits work. When timer fires, Master does maintenance. No mailbox. `[mailbox-less, Pool + Select, job scheduling]`
-59. **Pool + Group: worker pool** — Master spawns N workers via `Io.Group`. All workers get/put from shared pool. Master cancels all via `group.cancel`. Workers exit, remaining items collected via `pool.close`. No mailbox. `[mailbox-less, Pool + Group, worker lifecycle]`
+57. **Pool + Future: simple worker** — Master spawns one worker via `io.concurrent`, passing iteration count N as spawn-time argument. Worker maintains its own counter (starts at 0, increments each cycle). Each cycle: `pool.get` acquires empty container, worker writes its current counter into the container, calls `pool.put` to return. After N cycles, worker exits; final counter state available via `Future.await`. Work input: N passed at spawn time + worker's own counter state. Pool provides the buffer; mailbox is not needed. `[mailbox-less, Pool + Future, spawn-time args + worker-owned state, pool as buffer]`
+
+58. **Pool + Select: job scheduler** — Master holds an internal cycle counter and a target count. Seeds pool with N empty containers. Uses `pool.get_wait_select` + timer in Select. When pool item available: Master fills container with current cycle index from its own counter, increments counter, puts item back immediately (demonstrating pool as processing slot gating). When timer fires: Master logs progress from its own state. Loop exits when target count reached. Work input: Master's own counter. Pool availability controls concurrency. `[mailbox-less, Pool + Select, Master-owned state drives work, pool as concurrency gate]`
+
+59. **Pool + Group: worker pool** — Master spawns N workers via `Io.Group`, passing each worker its own task index (0..N-1) as spawn-time argument. Pool seeded with N empty containers. Each worker: calls `pool.get` to acquire an empty container, writes its task index and a computed result into the container, calls `pool.put` to return. Workers exit after one cycle. Master cancels any remaining via `group.cancel`. Remaining containers collected via `pool.close`. Work input: task index passed at spawn time. Pool provides the container for each worker's result. `[mailbox-less, Pool + Group, spawn-time args drive work, cancel + close]`
+
 60. **Pool + Select + Network** — Master uses Select with `pool.get_wait_select` + network socket read. Incoming data from network, processed items recycled via pool. No mailbox. Two event sources: pool availability + network data. `[mailbox-less, Pool + Select + external Io]`
+
 61. **When to add Mailbox** — Same setup as scenario 60, but now multiple independent external clients send work items. Fan-in to mailbox becomes necessary. Add mailbox as third event source in Select. Show the transition: mailbox-less → mailbox needed when senders are independent and unknown. `[transition point, fan-in triggers mailbox addition]`
 
 ---

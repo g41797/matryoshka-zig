@@ -26,14 +26,14 @@
 - Architecture: matryoshka-architecture-foundation-4-001.md
 - Architecture introduction: matryoshka-architecture-001.md
 - Tests: task1-tests-001.md (73 scenarios, Layers 1-3), task2-tests-001.md (16 scenarios, Layer 4)
-- Examples: task1-examples-001.md, task2-examples-001.md
+- Examples: task1-examples-002.md, task2-examples-002.md
 - Scenarios (historical): task1-scenarios-001.md (92), task2-scenarios-001.md (61)
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-io-implementation-plan-021.md (slim, state-only)
-- Rules: rules-001.md
-- Thinking model: matryoshka-model-001.md
+- Plan: matryoshka-io-implementation-plan-023.md (slim, state-only)
+- Rules: rules-003.md
+- Thinking model: matryoshka-model-003.md
 - Patterns: patterns-001.md
 - Docs plan: matryoshka-io-docs-plan-001.md
 
@@ -73,7 +73,7 @@ matryoshka-io/
 - STATUS.md first, updated after every stage.
 - Document rules apply to all markdown.
 - condition_waitTimeout copied from legacy mailbox (Open Item 5).
-- Tests check implementation. Examples show stories and stress-test.
+- Tests check implementation. Examples show real usage patterns and stress-test.
 - Examples have test wrappers. Examples come after tested code.
 - Scenarios re-partitioned into tests + examples (Stage 0.5).
 - Helper code (NodeMixin, Event, Sensor) developed in same stage as the code it supports.
@@ -109,10 +109,117 @@ INTR 5 — DONE (161/161 tests). Stories infrastructure + doc quality overhaul c
 STORY 2 — Print Server narrative. DONE.
 STORY 1 — Video Transcoder narrative rewrite. DONE.
 Story Rhythm — Both stories SRS+Translation+Insight rewritten. DONE.
+EXMPL 1 — Example completeness audit + rule addition. DONE. Plan version 022 created.
+EXMPL 2 — Master pattern: pilot (scenario 18) + doc update. DONE. Plan version 023 created.
 Stage 9 — Docs + README + autodocs. NEXT.
 Current: Stage 9 not started.
 
 ## Session Log
+
+### 2026-07-01 — EXMPL 1 (Example completeness audit + rule addition)
+**Participants**: human + Claude
+
+**Summary**
+Doc-only stage. No Zig code written. No kitchen scripts needed.
+
+New principle added to thinking model.
+- "Pool items are empty containers" added to `matryoshka-model-002.md` as a Core Principle.
+- Pool items are resources acquired empty — equivalent to `new`.
+- Work intent must come from outside the pool item: mailbox, network, timer, spawn-time args, or worker's own accumulated state.
+- A worker that only calls `pool.get` and `pool.put` with no other input source does nothing useful.
+- Applies to examples and stories alike.
+
+New rule added.
+- "Completeness" block added to `rules-002.md` Coding Rules — Examples section.
+- An example must show: origin of work input, what the worker does, where results go.
+- A lifecycle-only example (get → put, no input source, no output destination) is not complete.
+
+Audit results.
+- `task1-examples-002.md`: all 29 scenarios OK. Re-issued with compliance header note only.
+- `task2-examples-002.md`: 7 scenarios revised — 46, 47, 53, 56, 57, 58, 59.
+- Root cause: mailbox-less scenarios showed lifecycle mechanics but no work input source.
+- Fix: each revised scenario now states explicit work input (Master's own state/queue, spawn-time args) and pool's role (empty container, processing slot, result carrier).
+
+**Changes**
+- `design/matryoshka-model-002.md` — new version; "Pool items are empty containers" Core Principle added
+- `design/rules-002.md` — new version; Completeness block added to example rules; companion links updated
+- `design/task1-examples-002.md` — re-issued; compliance header note added; no scenario changes
+- `design/task2-examples-002.md` — re-issued; 7 scenarios revised (46, 47, 53, 56, 57, 58, 59)
+- `design/matryoshka-io-implementation-plan-022.md` — new plan version; EXMPL 1 added; Stage 9 NEXT
+- `design/context.md` — pointers updated: rules → 002, model → 002, examples → 002, plan → 022
+- `design/STATUS.md` — sources updated; EXMPL 1 stage line; this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| Kitchen scripts | not run — doc-only stage |
+| Post-stage cleanup | doc-only — no code to clean |
+| AI-sh + banned words scan | see below |
+
+**AI-sh + banned words scan** (new .md files):
+- `task2-examples-002.md` scenario 46: `fires` introduced by this session → fixed: "Timer fires periodically" → "Timer triggers maintenance periodically".
+- Pre-existing violations carried unchanged from -001 files (owner decides on fix):
+  - `task1-examples-002.md` scenario 60: "drains backlog" (`drain`).
+  - `task2-examples-002.md` scenarios 25, 26, 27, 29, 30, 31: `fires` in timer/cancel descriptions.
+  - `task2-examples-002.md` scenarios 27, 39, 40: `drain` in descriptions.
+
+**Next**: EXMPL 2 — Master pattern: pilot + doc update.
+
+---
+
+### 2026-07-01 — EXMPL 2 (Master pattern: pilot + doc update)
+**Participants**: human + Claude
+
+**Summary**
+New coding rule: flat function vs. allocate-a-Master. Pilot example implemented and all kitchen scripts pass.
+
+New rules added.
+- Two-tier Master pattern rule added to `rules-003.md` (Coding Rules — Examples and Stories).
+- When to stay flat: minimal functionality, all state in locals, short lifecycle.
+- When to allocate a Master: multiple steps, shared state between steps, complex lifecycle.
+- Same rule applies to worker functions.
+- Canonical reference: `examples/layer4/master_with_pool.zig`.
+
+Model updated.
+- "When to allocate a Master" added to `matryoshka-model-003.md` as Core Principle.
+- "Workers are also Masters when they grow beyond minimal functionality" added to "Master is a concept, not a type".
+- Example and Story sections updated: small examples flat; big examples and all stories use Master pattern.
+
+Pilot implementation.
+- `examples/layer4/master_with_pool.zig` rewritten with `MasterWithPool` struct.
+- `MasterWithPool.init` acquires pool + mailbox with correct errdefer.
+- `MasterWithPool.destroy` releases in correct order, frees allocation last.
+- `MasterWithPool.run` readable main flow: sendItems → spawn worker → cancel.
+- `sendItems` is the private step function.
+- `workerFn` stays flat — simple worker, no Master allocation needed.
+- Test wrapper unchanged. 161/161 tests pass.
+
+**Changes**
+- `design/rules-003.md` — new version; Master pattern rule added
+- `design/matryoshka-model-003.md` — new version; "When to allocate a Master" Core Principle added
+- `examples/layer4/master_with_pool.zig` — rewritten with MasterWithPool struct
+- `design/matryoshka-io-implementation-plan-023.md` — new plan version; EXMPL 2 added; EXMPL 3 NEXT
+- `design/context.md` — pointers updated: rules → 003, model → 003, plan → 023
+- `design/STATUS.md` — sources updated; EXMPL 2 stage line; this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| build_and_test_debug.sh | PASS |
+| build_and_test_all.sh | PASS (all 4 optimization modes) |
+| build_cross_debug.sh | PASS (mac + windows) |
+| Post-stage cleanup | done — see below |
+| AI-sh + banned words scan | no new violations |
+
+**Post-stage cleanup**
+- `master_with_pool.zig`: ownership diagram updated to reflect Master pattern destroy path.
+- Scan of rules-003.md and matryoshka-model-003.md: all hits are inside the banned-words definition list. No violations.
+
+**Next**: EXMPL 3 — Full task2 conversion (all task2 examples to Master pattern).
+
+---
 
 ### 2026-06-29 — Story Rhythm Fixes (Both stories)
 **Participants**: human + Claude

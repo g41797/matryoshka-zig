@@ -3,11 +3,12 @@
 
 // Ownership:
 //
-//  pool.get ──► slot ──mailbox.send──► mailbox
-//                                         │ worker (io.concurrent)
-//                                         │ mailbox.receive ──► slot
-//                                         │ pool.put (defer) ──► pool (recycled)
+//  master ──pool.get──► slot ──mailbox.send──► mailbox
+//                                                 │ worker (io.concurrent)
+//                                                 │ mailbox.receive ──► slot
+//                                                 │ pool.put (defer) ──► pool (recycled)
 //  fut.cancel ──► worker exits at next mailbox.receive
+//  master.destroy ──► pool.close ──► mailbox.close ──► free remaining
 
 const WorkerCtx = struct {
     mbh: MailboxHandle,
@@ -22,40 +23,66 @@ fn workerFn(ctx: *WorkerCtx) anyerror!void {
     }
 }
 
+const MasterWithPool = struct {
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    pool_ctx: helpers.AlwaysCreateCtx,
+    tags: [1]*const anyopaque,
+    ph: PoolHandle,
+    mbh: MailboxHandle,
+    worker_ctx: WorkerCtx,
+
+    fn init(allocator: std.mem.Allocator, io: std.Io) !*MasterWithPool {
+        const self = try allocator.create(MasterWithPool);
+        errdefer allocator.destroy(self);
+        self.allocator = allocator;
+        self.io = io;
+        self.pool_ctx = .{ .alloc = allocator };
+        self.tags = .{types.EventPolyHelper.TAG};
+        self.ph = try pool.new(io, allocator);
+        errdefer {
+            pool.close(self.ph);
+            pool.destroy(self.ph, allocator);
+        }
+        try pool.init(self.ph, self.pool_ctx.poolHooks(&self.tags));
+        self.mbh = try mailbox.new(io, allocator);
+        self.worker_ctx = .{ .mbh = self.mbh, .ph = self.ph };
+        return self;
+    }
+
+    fn destroy(self: *MasterWithPool) void {
+        pool.close(self.ph);
+        pool.destroy(self.ph, self.allocator);
+        var rem: std.DoublyLinkedList = mailbox.close(self.mbh);
+        helpers.freeList(&rem, self.allocator);
+        mailbox.destroy(self.mbh, self.allocator);
+        self.allocator.destroy(self);
+    }
+
+    fn run(self: *MasterWithPool) !void {
+        try self.sendItems();
+        var fut = try self.io.concurrent(workerFn, .{&self.worker_ctx});
+        fut.cancel(self.io) catch {};
+        std.log.info("master: worker stopped", .{});
+    }
+
+    fn sendItems(self: *MasterWithPool) !void {
+        for (0..3) |i| {
+            var slot: Slot = null;
+            defer pool.put(self.ph, &slot);
+            try pool.get(self.ph, types.EventPolyHelper.TAG, .available_or_new, &slot);
+            const ev = types.EventPolyHelper.cast(slot.?).?;
+            ev.code = @intCast(i + 1);
+            std.log.info("master: sending Event code={d}", .{ev.code});
+            try mailbox.send(self.mbh, &slot);
+        }
+    }
+};
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
-    const ph: PoolHandle = try pool.new(io, allocator);
-    var pool_ctx: helpers.AlwaysCreateCtx = .{ .alloc = allocator };
-    const tags = [_]*const anyopaque{types.EventPolyHelper.TAG};
-    try pool.init(ph, pool_ctx.poolHooks(&tags));
-    defer {
-        pool.close(ph);
-        pool.destroy(ph, allocator);
-    }
-
-    const mbh: MailboxHandle = try mailbox.new(io, allocator);
-    defer {
-        var rem: std.DoublyLinkedList = mailbox.close(mbh);
-        helpers.freeList(&rem, allocator);
-        mailbox.destroy(mbh, allocator);
-    }
-
-    for (0..3) |i| {
-        var slot: Slot = null;
-        defer pool.put(ph, &slot);
-        try pool.get(ph, types.EventPolyHelper.TAG, .available_or_new, &slot);
-        const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-        ev.code = @intCast(i + 1);
-        std.log.info("master: sending Event code={d}", .{ev.code});
-        try mailbox.send(mbh, &slot);
-    }
-
-    var ctx: WorkerCtx = .{ .mbh = mbh, .ph = ph };
-    var fut = try io.concurrent(workerFn, .{&ctx});
-
-    // cancel stops the worker at its next mailbox.receive.
-    fut.cancel(io) catch {};
-
-    std.log.info("master: worker stopped", .{});
+    const master = try MasterWithPool.init(allocator, io);
+    defer master.destroy();
+    try master.run();
 }
 
 const helpers = @import("helpers");
