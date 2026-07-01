@@ -1,5 +1,3 @@
-Here's a cleaned-up version that preserves your message and removes repetition and contradictions.
-
 # matryoshka-io
 
 ## The problem
