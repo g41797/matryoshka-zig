@@ -35,6 +35,14 @@ fn seedPool(ph: PoolHandle) !void {
     }
 }
 
+fn setupSelect(ph: PoolHandle, io: std.Io, sel: *std.Io.Select(MasterEvent)) !void {
+    const sleep_t: std.Io.Timeout = .{
+        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+    };
+    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+}
+
 fn eventLoop(ph: PoolHandle, sel: *std.Io.Select(MasterEvent), processed: *usize) !void {
     loop: while (true) {
         const event: MasterEvent = try sel.await();
@@ -87,13 +95,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
 
     try seedPool(ph);
 
-    const sleep_t: std.Io.Timeout = .{
-        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
-    };
     var buf: [8]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
-    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
-    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+    try setupSelect(ph, io, &sel);
 
     var processed: usize = 0;
     var recycled: usize = 0;

@@ -41,29 +41,16 @@ fn seedPool(ph: PoolHandle) !void {
     }
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
-    const ph: PoolHandle = try pool.new(io, allocator);
-    var pool_ctx: helpers.AlwaysCreateCtx = .{ .alloc = allocator };
-    const tags = [_]*const anyopaque{types.EventPolyHelper.TAG};
-    try pool.init(ph, pool_ctx.poolHooks(&tags));
-    defer {
-        pool.close(ph);
-        pool.destroy(ph, allocator);
-    }
-
-    try seedPool(ph);
-
+fn setupSelect(ph: PoolHandle, io: std.Io, sel: *std.Io.Select(MasterEvent)) !void {
     const sleep_t: std.Io.Timeout = .{
         .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
     };
-
-    var buf: [4]MasterEvent = undefined;
-    var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
     try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
     try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+}
 
+fn runEventLoop(ph: PoolHandle, io: std.Io, sel: *std.Io.Select(MasterEvent)) !usize {
     var cycle: usize = 0;
-
     while (true) {
         const event: MasterEvent = try sel.await();
         switch (event) {
@@ -76,9 +63,6 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
                     cycle += 1;
                     std.log.info("pool_ev: filled container with cycle={d}", .{ev.code});
                     if (cycle < TARGET) {
-                        // Re-spawn only when more cycles needed.
-                        // At TARGET, we do NOT re-spawn: timer is the only in-flight source,
-                        // so cancelDiscard below has no item to lose.
                         try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
                     } else {
                         break;
@@ -88,12 +72,33 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
             },
             .timer => {
                 std.log.info("timer: maintenance — cycles completed so far: {d}", .{cycle});
+                const sleep_t: std.Io.Timeout = .{
+                    .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+                };
                 try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
             },
         }
     }
-
     sel.cancelDiscard();
+    return cycle;
+}
+
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    const ph: PoolHandle = try pool.new(io, allocator);
+    var pool_ctx: helpers.AlwaysCreateCtx = .{ .alloc = allocator };
+    const tags = [_]*const anyopaque{types.EventPolyHelper.TAG};
+    try pool.init(ph, pool_ctx.poolHooks(&tags));
+    defer {
+        pool.close(ph);
+        pool.destroy(ph, allocator);
+    }
+
+    try seedPool(ph);
+
+    var buf: [4]MasterEvent = undefined;
+    var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
+    try setupSelect(ph, io, &sel);
+    const cycle = try runEventLoop(ph, io, &sel);
 
     try helpers.expect(error.SelectPoolEventFailed, cycle == TARGET, "wrong cycle count");
     std.log.info("done: {d} cycles driven by Master counter — pool items were empty containers", .{cycle});

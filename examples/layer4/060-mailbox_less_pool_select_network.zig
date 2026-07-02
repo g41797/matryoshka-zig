@@ -27,9 +27,59 @@ const MasterEvent = union(enum) {
     network: NetworkResult,
 };
 
+fn seedPool(ph: PoolHandle) !void {
+    for (0..N_POOL_ITEMS) |i| {
+        var slot: Slot = null;
+        try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
+        types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
+        pool.put(ph, &slot);
+    }
+}
+
 fn networkReadFn(delay: std.Io.Timeout, io: std.Io) NetworkResult {
     std.Io.Timeout.sleep(delay, io) catch {};
     return .{ .bytes = 64 };
+}
+
+fn setupSelect(ph: PoolHandle, io: std.Io, sel: *std.Io.Select(MasterEvent)) !void {
+    const net_delay: std.Io.Timeout = .{
+        .duration = .{ .raw = .{ .nanoseconds = NET_DELAY_NS }, .clock = .real },
+    };
+    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+    try sel.concurrent(.network, networkReadFn, .{ net_delay, io });
+}
+
+fn runEventLoop(ph: PoolHandle, io: std.Io, sel: *std.Io.Select(MasterEvent), pool_done: *usize, net_done: *usize) !void {
+    while (pool_done.* < N_POOL_ITEMS or net_done.* < N_NET_ROUNDS) {
+        const event: MasterEvent = try sel.await();
+        switch (event) {
+            .pool_ev => |r| switch (r) {
+                .item => |handle| {
+                    var slot: Slot = handle;
+                    defer pool.put(ph, &slot);
+                    const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
+                    ev.code += 10;
+                    pool_done.* += 1;
+                    std.log.info("pool_ev: processed code={d} ({d}/{d})", .{ ev.code, pool_done.*, N_POOL_ITEMS });
+                    if (pool_done.* < N_POOL_ITEMS) {
+                        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+                    }
+                },
+                .closed, .canceled, .timeout, .not_created => break,
+            },
+            .network => |r| {
+                net_done.* += 1;
+                std.log.info("network: {d} bytes received ({d}/{d})", .{ r.bytes, net_done.*, N_NET_ROUNDS });
+                if (net_done.* < N_NET_ROUNDS) {
+                    const net_delay: std.Io.Timeout = .{
+                        .duration = .{ .raw = .{ .nanoseconds = NET_DELAY_NS }, .clock = .real },
+                    };
+                    try sel.concurrent(.network, networkReadFn, .{ net_delay, io });
+                }
+            },
+        }
+    }
+    sel.cancelDiscard();
 }
 
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
@@ -42,55 +92,15 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         pool.destroy(ph, allocator);
     }
 
-    // Seed pool with items.
-    for (0..N_POOL_ITEMS) |i| {
-        var slot: Slot = null;
-        try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
-        types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
-        pool.put(ph, &slot);
-    }
-
-    const net_delay: std.Io.Timeout = .{
-        .duration = .{ .raw = .{ .nanoseconds = NET_DELAY_NS }, .clock = .real },
-    };
+    try seedPool(ph);
 
     var buf: [8]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
-
-    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
-    try sel.concurrent(.network, networkReadFn, .{ net_delay, io });
+    try setupSelect(ph, io, &sel);
 
     var pool_done: usize = 0;
     var net_done: usize = 0;
-
-    while (pool_done < N_POOL_ITEMS or net_done < N_NET_ROUNDS) {
-        const event: MasterEvent = try sel.await();
-        switch (event) {
-            .pool_ev => |r| switch (r) {
-                .item => |handle| {
-                    var slot: Slot = handle;
-                    defer pool.put(ph, &slot);
-                    const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-                    ev.code += 10;
-                    pool_done += 1;
-                    std.log.info("pool_ev: processed code={d} ({d}/{d})", .{ ev.code, pool_done, N_POOL_ITEMS });
-                    if (pool_done < N_POOL_ITEMS) {
-                        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
-                    }
-                },
-                .closed, .canceled, .timeout, .not_created => break,
-            },
-            .network => |r| {
-                net_done += 1;
-                std.log.info("network: {d} bytes received ({d}/{d})", .{ r.bytes, net_done, N_NET_ROUNDS });
-                if (net_done < N_NET_ROUNDS) {
-                    try sel.concurrent(.network, networkReadFn, .{ net_delay, io });
-                }
-            },
-        }
-    }
-
-    sel.cancelDiscard();
+    try runEventLoop(ph, io, &sel, &pool_done, &net_done);
 
     try helpers.expect(error.MailboxLessNetworkFailed, pool_done == N_POOL_ITEMS, "pool items not all processed");
     try helpers.expect(error.MailboxLessNetworkFailed, net_done == N_NET_ROUNDS, "network rounds not complete");

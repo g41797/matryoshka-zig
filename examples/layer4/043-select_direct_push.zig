@@ -19,6 +19,24 @@ fn pusherFn(sel_ptr: *std.Io.Select(MasterEvent)) void {
     sel_ptr.queue.putOneUncancelable(sel_ptr.io, .{ .direct = 99 }) catch {};
 }
 
+fn setupSourcesAndPusher(mbh: MailboxHandle, io: std.Io, sel: *std.Io.Select(MasterEvent)) !std.Io.Future(void) {
+    try sel.concurrent(.inbox, mailbox.receiveResult, .{ mbh, null });
+    return io.concurrent(pusherFn, .{sel});
+}
+
+fn awaitDirectPushAndShutdown(sel: *std.Io.Select(MasterEvent), pusher_fut: *std.Io.Future(void), io: std.Io) !void {
+    const event: MasterEvent = try sel.await();
+    switch (event) {
+        .direct => |v| {
+            try helpers.expect(error.SelectDirectPushFailed, v == 99, "wrong direct push value");
+            std.log.info("direct push: received {d}", .{v});
+        },
+        .inbox => return error.SelectDirectPushFailed,
+    }
+    pusher_fut.await(io);
+    sel.cancelDiscard();
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -29,24 +47,8 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
 
     var buf: [4]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
-
-    // Spawn blocking inbox source (mailbox is empty — keeps sel.await blocked).
-    try sel.concurrent(.inbox, mailbox.receiveResult, .{ mbh, null });
-
-    // Wild thread: directly push to Select queue, bypassing the concurrent fn path.
-    var pusher_fut: std.Io.Future(void) = try io.concurrent(pusherFn, .{&sel});
-
-    const event: MasterEvent = try sel.await();
-    switch (event) {
-        .direct => |v| {
-            try helpers.expect(error.SelectDirectPushFailed, v == 99, "wrong direct push value");
-            std.log.info("direct push: received {d}", .{v});
-        },
-        .inbox => return error.SelectDirectPushFailed,
-    }
-
-    pusher_fut.await(io);
-    sel.cancelDiscard();
+    var pusher_fut = try setupSourcesAndPusher(mbh, io, &sel);
+    try awaitDirectPushAndShutdown(&sel, &pusher_fut, io);
     std.log.info("done: direct push bypassed concurrent fn path", .{});
 }
 

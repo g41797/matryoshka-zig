@@ -41,6 +41,49 @@ fn seedPool(ph: PoolHandle) !void {
     }
 }
 
+fn setupSelect(ph: PoolHandle, io: std.Io, sel: *std.Io.Select(MasterEvent)) !void {
+    const sleep_t: std.Io.Timeout = .{
+        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+    };
+    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+}
+
+fn runEventLoop(ph: PoolHandle, io: std.Io, sel: *std.Io.Select(MasterEvent), cycle: *usize, ticks: *usize) !void {
+    while (true) {
+        const event: MasterEvent = try sel.await();
+        switch (event) {
+            .pool_ev => |r| switch (r) {
+                .item => |handle| {
+                    var slot: Slot = handle;
+                    defer pool.put(ph, &slot);
+                    const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
+                    ev.code = @intCast(cycle.*);
+                    cycle.* += 1;
+                    std.log.info("pool_ev: filled container with cycle index={d} ({d}/{d})", .{ ev.code, cycle.*, TARGET });
+                    if (cycle.* < TARGET) {
+                        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+                    } else {
+                        break;
+                    }
+                },
+                .closed, .canceled, .timeout, .not_created => break,
+            },
+            .timer => {
+                ticks.* += 1;
+                std.log.info("timer tick {d}: maintenance — cycles so far: {d}", .{ ticks.*, cycle.* });
+                if (cycle.* < TARGET) {
+                    const sleep_t: std.Io.Timeout = .{
+                        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+                    };
+                    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+                }
+            },
+        }
+    }
+    sel.cancelDiscard();
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const ph: PoolHandle = try pool.new(io, allocator);
     var pool_ctx: helpers.AlwaysCreateCtx = .{ .alloc = allocator };
@@ -53,51 +96,13 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
 
     try seedPool(ph);
 
-    const sleep_t: std.Io.Timeout = .{
-        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
-    };
-
     var buf: [8]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
-
-    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
-    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
+    try setupSelect(ph, io, &sel);
 
     var cycle: usize = 0;
     var ticks: usize = 0;
-
-    while (true) {
-        const event: MasterEvent = try sel.await();
-        switch (event) {
-            .pool_ev => |r| switch (r) {
-                .item => |handle| {
-                    var slot: Slot = handle;
-                    defer pool.put(ph, &slot);
-                    const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-                    ev.code = @intCast(cycle); // fill empty container with cycle index
-                    cycle += 1;
-                    std.log.info("pool_ev: filled container with cycle index={d} ({d}/{d})", .{ ev.code, cycle, TARGET });
-                    if (cycle < TARGET) {
-                        // Re-spawn only while more cycles needed.
-                        // At TARGET, timer is the only in-flight source — cancelDiscard has no item to lose.
-                        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
-                    } else {
-                        break;
-                    }
-                },
-                .closed, .canceled, .timeout, .not_created => break,
-            },
-            .timer => {
-                ticks += 1;
-                std.log.info("timer tick {d}: maintenance — cycles so far: {d}", .{ ticks, cycle });
-                if (cycle < TARGET) {
-                    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
-                }
-            },
-        }
-    }
-
-    sel.cancelDiscard();
+    try runEventLoop(ph, io, &sel, &cycle, &ticks);
 
     try helpers.expect(error.MailboxLessSchedulerFailed, cycle == TARGET, "wrong cycle count");
     std.log.info("done: {d} cycles scheduled by Master counter, {d} timer ticks — Pool+Select, no mailbox", .{ cycle, ticks });

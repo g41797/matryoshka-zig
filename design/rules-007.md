@@ -1,9 +1,9 @@
-# Matryoshka Zig — Rules (005)
+# Matryoshka Zig — Rules (007)
 
-Versioned doc. Replaces [rules-004.md](rules-004.md).
+Versioned doc. Replaces [rules-006.md](rules-006.md).
 All coding, doc, and process rules for the project.
 Companion: [matryoshka-model-003.md](matryoshka-model-003.md) — the thinking model.
-Companion: [patterns-004.md](patterns-004.md) — reusable coding patterns.
+Companion: [patterns-006.md](patterns-006.md) — reusable coding patterns.
 
 ---
 
@@ -34,6 +34,30 @@ The signal.
 - A comment marks a step you should have named before writing.
 - Common sense: a 1-2 line guard or log between step calls stays inline.
 - Only blocks with distinct, nameable purpose are extracted.
+
+Structural extraction signals.
+- These patterns are always violations — no comment needed to trigger extraction.
+- 1. Any `while` loop with a `switch` body inside a coordinator.
+  - Name: `runEventLoop`, `eventLoop`, or domain equivalent.
+  - The loop is the step. Extract it regardless of length.
+- 2. Any `Io.Select` setup block inside a coordinator (`buf` + `sel.init` + `sel.concurrent` calls).
+  - Name: `setupSelect`, or fold into `runEventLoop` if trivially short.
+  - `buf` and `sel` are declared at coordinator scope and passed as `*Sel` to steps,
+    or held as struct fields in a Master.
+- 3. Any cluster of `io.concurrent` / `group.concurrent` / `Thread.spawn` calls inside a coordinator.
+  - Name: `spawnWorkers`, `runWorkers`, `spawnSenders`, or equivalent.
+  - `await` calls belong in the same step or in a paired `awaitWorkers` step.
+- 4. Any for-loop or sequential block that sends, fills, or seeds items inside a coordinator.
+  - Name: `sendItems`, `fillMailbox`, `seedPool`, `sendEvents`, or equivalent.
+  - Already covered by the comment signal but now also structural — no comment required.
+
+Step function parameters.
+- Pass only state that is transient between specific steps (output of one step, input to the next).
+- State shared by the coordinator and most steps belongs in a struct field.
+  - Masters: `self.field` — already in the struct, no parameter needed.
+  - Flat coordinators with 3+ shared params: introduce a local value struct. No heap allocation.
+- A step function with 3+ parameters that are all coordinator-scope state signals: introduce a struct.
+- Simple extractions with 1-2 params: explicit parameters are fine.
 
 Applies to all code: `src/`, `helpers/`, `examples/`, `tests/`, `stories/`.
 Small functions with no distinct phases need no extraction.
@@ -197,9 +221,9 @@ Why this shape.
 ## Coding Standards
 
 Import order (LE style).
+- "LE" means "_Little-endian_" - imports are placed at the bottom of the file, after the code.
 - Package and local imports first.
 - `const std = @import("std")` always last.
-- "LE" means "_Little-endian_" - imports are placed at the bottom of the file, after the code. 
 - Do NOT flag std-last as a violation.
 
 ```zig
@@ -302,8 +326,8 @@ Banned words.
 * Link to:
 
    * `matryoshka-model-003.md`
-   * `rules-005.md`
-   * `patterns-004.md`
+   * `rules-007.md`
+   * `patterns-006.md`
 
 * When extending an existing document:
 
@@ -323,12 +347,16 @@ Per-stage finish checklist.
 3. `kitchen/build_cross_debug.sh` — cross-compile Debug for mac + windows.
 4. Post-stage cleanup: revise code for obsolete parts, wrong comments, repeated code that can be extracted.
 5. Re-run all three kitchen scripts after cleanup.
-6. After kitchen scripts pass: scan changed `.zig` files for patterns not yet in `patterns-004.md`.
+6. After kitchen scripts pass: scan changed `.zig` files for patterns not yet in `patterns-006.md`.
    - Report candidate new patterns to owner. Owner decides.
    - Do not auto-document or auto-extract. Report only.
 7. AI-sh + banned words scan over changed `*.md` and `*.zig`. Report to owner.
 8. Update `design/STATUS.md` Session Log. Include a "Post-stage cleanup" row. Absence of that row means the rule was skipped.
 9. Sync `README.md` and any touched per-module README.
+10. Rules audit: after any stage that changes `*.zig` or `*.md` files, audit all changed files
+    against every rule in this document. Report violations to owner before closing the stage.
+    Covers: Observable structural signals, Slot Rule, import order, banned words,
+    example completeness, Master pattern shape, comment rules, doc rules — all rules.
 
 Kitchen script order.
 - `build_and_test_debug.sh` → `build_and_test_all.sh` → `build_cross_debug.sh`.
@@ -383,9 +411,9 @@ Implementation invariants.
 
 ## Matryoshka Coding Patterns
 
-The pattern catalog lives in [patterns-004.md](patterns-004.md).
+The pattern catalog lives in [patterns-006.md](patterns-006.md).
 
-- Observable function shapes: coordinator / step / init / destroy.
+- Observable function shapes: coordinator / step / init / destroy / Select event loop / spawn-await.
 - Pool modes, seeding, backpressure, hooks.
 - Io.Select event loop and re-register.
 - Io.Group worker sets and shutdown.
@@ -394,4 +422,7 @@ The pattern catalog lives in [patterns-004.md](patterns-004.md).
 - Error handling on receive (Closed/Timeout vs Canceled).
 - Master composition.
 
-Rules constrain. Patterns reuse. Read the catalog for code shapes; read this doc for what is mandatory.
+- Rules constrain.
+- Patterns reuse.
+- Read the catalog for code shapes.
+- Read this doc for what is mandatory.

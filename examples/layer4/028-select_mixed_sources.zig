@@ -48,6 +48,74 @@ fn seedPool(ph: PoolHandle, count: usize) !void {
     }
 }
 
+const Ctx = struct {
+    mbh: MailboxHandle,
+    ph: PoolHandle,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    inbox_count: usize = 0,
+    pool_count: usize = 0,
+    ticks: usize = 0,
+
+    fn setupSelect(self: *Ctx, sel: *std.Io.Select(MasterEvent)) !void {
+        const sleep_t: std.Io.Timeout = .{
+            .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+        };
+        try sel.concurrent(.inbox, mailbox.receiveResult, .{ self.mbh, null });
+        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ self.ph, types.SensorPolyHelper.TAG, null });
+        try sel.concurrent(.timer, sleepFn, .{ sleep_t, self.io });
+    }
+
+    fn runEventLoop(self: *Ctx, sel: *std.Io.Select(MasterEvent)) !void {
+        while (self.inbox_count < INBOX_TARGET or self.pool_count < POOL_TARGET) {
+            const event: MasterEvent = try sel.await();
+            switch (event) {
+                .inbox => |r| switch (r) {
+                    .item => |handle| {
+                        var slot: Slot = handle;
+                        defer helpers.freeSlot(&slot, self.alloc);
+                        self.inbox_count += 1;
+                        std.log.info("inbox: Event code={d} ({d}/{d})", .{
+                            types.EventPolyHelper.cast(slot.?).?.code,
+                            self.inbox_count,
+                            INBOX_TARGET,
+                        });
+                        if (self.inbox_count < INBOX_TARGET) {
+                            try sel.concurrent(.inbox, mailbox.receiveResult, .{ self.mbh, null });
+                        }
+                    },
+                    .closed, .canceled, .timeout => break,
+                },
+                .pool_ev => |r| switch (r) {
+                    .item => |handle| {
+                        var slot: Slot = handle;
+                        defer pool.put(self.ph, &slot);
+                        self.pool_count += 1;
+                        std.log.info("pool_ev: Sensor value={d} ({d}/{d})", .{
+                            types.SensorPolyHelper.cast(slot.?).?.value,
+                            self.pool_count,
+                            POOL_TARGET,
+                        });
+                        if (self.pool_count < POOL_TARGET) {
+                            try sel.concurrent(.pool_ev, pool.getWaitResult, .{ self.ph, types.SensorPolyHelper.TAG, null });
+                        }
+                    },
+                    .closed, .canceled, .timeout, .not_created => break,
+                },
+                .timer => {
+                    self.ticks += 1;
+                    std.log.info("timer: tick {d}", .{self.ticks});
+                    const sleep_t: std.Io.Timeout = .{
+                        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+                    };
+                    try sel.concurrent(.timer, sleepFn, .{ sleep_t, self.io });
+                },
+            }
+        }
+        sel.cancelDiscard();
+    }
+};
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -68,69 +136,15 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     try seedMailbox(mbh, allocator, INBOX_TARGET);
     try seedPool(ph, POOL_TARGET);
 
-    const sleep_t: std.Io.Timeout = .{
-        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
-    };
-
     var buf: [8]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
+    var ctx: Ctx = .{ .mbh = mbh, .ph = ph, .alloc = allocator, .io = io };
+    try ctx.setupSelect(&sel);
+    try ctx.runEventLoop(&sel);
 
-    try sel.concurrent(.inbox, mailbox.receiveResult, .{ mbh, null });
-    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.SensorPolyHelper.TAG, null });
-    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
-
-    var inbox_count: usize = 0;
-    var pool_count: usize = 0;
-    var ticks: usize = 0;
-
-    while (inbox_count < INBOX_TARGET or pool_count < POOL_TARGET) {
-        const event: MasterEvent = try sel.await();
-        switch (event) {
-            .inbox => |r| switch (r) {
-                .item => |handle| {
-                    var slot: Slot = handle;
-                    defer helpers.freeSlot(&slot, allocator);
-                    inbox_count += 1;
-                    std.log.info("inbox: Event code={d} ({d}/{d})", .{
-                        types.EventPolyHelper.cast(slot.?).?.code,
-                        inbox_count,
-                        INBOX_TARGET,
-                    });
-                    if (inbox_count < INBOX_TARGET) {
-                        try sel.concurrent(.inbox, mailbox.receiveResult, .{ mbh, null });
-                    }
-                },
-                .closed, .canceled, .timeout => break,
-            },
-            .pool_ev => |r| switch (r) {
-                .item => |handle| {
-                    var slot: Slot = handle;
-                    defer pool.put(ph, &slot);
-                    pool_count += 1;
-                    std.log.info("pool_ev: Sensor value={d} ({d}/{d})", .{
-                        types.SensorPolyHelper.cast(slot.?).?.value,
-                        pool_count,
-                        POOL_TARGET,
-                    });
-                    if (pool_count < POOL_TARGET) {
-                        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.SensorPolyHelper.TAG, null });
-                    }
-                },
-                .closed, .canceled, .timeout, .not_created => break,
-            },
-            .timer => {
-                ticks += 1;
-                std.log.info("timer: tick {d}", .{ticks});
-                try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
-            },
-        }
-    }
-
-    sel.cancelDiscard();
-
-    try helpers.expect(error.SelectMixedSourcesFailed, inbox_count == INBOX_TARGET, "inbox count mismatch");
-    try helpers.expect(error.SelectMixedSourcesFailed, pool_count == POOL_TARGET, "pool count mismatch");
-    std.log.info("done: inbox={d}, pool={d}, ticks={d}", .{ inbox_count, pool_count, ticks });
+    try helpers.expect(error.SelectMixedSourcesFailed, ctx.inbox_count == INBOX_TARGET, "inbox count mismatch");
+    try helpers.expect(error.SelectMixedSourcesFailed, ctx.pool_count == POOL_TARGET, "pool count mismatch");
+    std.log.info("done: inbox={d}, pool={d}, ticks={d}", .{ ctx.inbox_count, ctx.pool_count, ctx.ticks });
 }
 
 const helpers = @import("helpers");

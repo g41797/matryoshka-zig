@@ -11,6 +11,30 @@
 //          │
 //  freeSlot
 
+fn sendItem(mbh: MailboxHandle, alloc: std.mem.Allocator) !void {
+    var slot: Slot = null;
+    defer types.EventPolyHelper.destroy(alloc, &slot);
+    try types.EventPolyHelper.create(alloc, &slot);
+    types.EventPolyHelper.cast(slot.?).?.code = 42;
+    try mailbox.send(mbh, &slot);
+}
+
+fn receiveAndVerify(mbh: MailboxHandle, alloc: std.mem.Allocator, io: std.Io) !void {
+    var fut: std.Io.Future(mailbox.ReceiveResult) = try mailbox.receive_future(mbh, null);
+    const result: mailbox.ReceiveResult = fut.await(io);
+
+    switch (result) {
+        .item => |handle| {
+            var received: Slot = handle;
+            defer helpers.freeSlot(&received, alloc);
+            const ev: *types.Event = types.EventPolyHelper.cast(received.?).?;
+            try helpers.expect(error.ReceiveFutureDirectFailed, ev.code == 42, "wrong code");
+            std.log.info("receive_future direct: got Event code={d}", .{ev.code});
+        },
+        else => return error.ReceiveFutureDirectFailed,
+    }
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -19,25 +43,8 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         mailbox.destroy(mbh, allocator);
     }
 
-    var slot: Slot = null;
-    defer types.EventPolyHelper.destroy(allocator, &slot);
-    try types.EventPolyHelper.create(allocator, &slot);
-    types.EventPolyHelper.cast(slot.?).?.code = 42;
-    try mailbox.send(mbh, &slot);
-
-    var fut: std.Io.Future(mailbox.ReceiveResult) = try mailbox.receive_future(mbh, null);
-    const result: mailbox.ReceiveResult = fut.await(io);
-
-    switch (result) {
-        .item => |handle| {
-            var received: Slot = handle;
-            defer helpers.freeSlot(&received, allocator);
-            const ev: *types.Event = types.EventPolyHelper.cast(received.?).?;
-            try helpers.expect(error.ReceiveFutureDirectFailed, ev.code == 42, "wrong code");
-            std.log.info("receive_future direct: got Event code={d}", .{ev.code});
-        },
-        else => return error.ReceiveFutureDirectFailed,
-    }
+    try sendItem(mbh, allocator);
+    try receiveAndVerify(mbh, allocator, io);
 }
 
 const helpers = @import("helpers");

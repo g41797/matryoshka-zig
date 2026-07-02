@@ -7,7 +7,7 @@
 //  │ receiveResult  │ receiveResult
 //  └────────┬───────┘
 //           ▼
-//  Select(MasterEvent) ◄── sleepFn (short timer fires first)
+//  Select(MasterEvent) ◄── sleepFn (short timer triggers first)
 //  │
 //  .timer ──► sel.cancel() loop
 //             .inbox1 .canceled ──► log
@@ -28,6 +28,62 @@ fn sleepFn(sleep_t: std.Io.Timeout, io: std.Io) void {
     std.Io.Timeout.sleep(sleep_t, io) catch {};
 }
 
+const Ctx = struct {
+    mbh1: MailboxHandle,
+    mbh2: MailboxHandle,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    canceled1: bool = false,
+    canceled2: bool = false,
+
+    fn setupSelect(self: *Ctx, sel: *std.Io.Select(MasterEvent)) !void {
+        const sleep_t: std.Io.Timeout = .{
+            .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+        };
+        try sel.concurrent(.inbox1, mailbox.receiveResult, .{ self.mbh1, null });
+        try sel.concurrent(.inbox2, mailbox.receiveResult, .{ self.mbh2, null });
+        try sel.concurrent(.timer, sleepFn, .{ sleep_t, self.io });
+    }
+
+    fn awaitTimerFirst(sel: *std.Io.Select(MasterEvent)) !void {
+        const first: MasterEvent = try sel.await();
+        switch (first) {
+            .timer => std.log.info("timer: canceling both inbox sources", .{}),
+            else => return error.SelectCancelCloseFailed,
+        }
+    }
+
+    fn clearCanceled(self: *Ctx, sel: *std.Io.Select(MasterEvent)) void {
+        while (sel.cancel()) |event| {
+            switch (event) {
+                .inbox1 => |r| switch (r) {
+                    .canceled => {
+                        std.log.info("inbox1: .canceled", .{});
+                        self.canceled1 = true;
+                    },
+                    .item => |handle| {
+                        var slot: Slot = handle;
+                        helpers.freeSlot(&slot, self.alloc);
+                    },
+                    .closed, .timeout => {},
+                },
+                .inbox2 => |r| switch (r) {
+                    .canceled => {
+                        std.log.info("inbox2: .canceled", .{});
+                        self.canceled2 = true;
+                    },
+                    .item => |handle| {
+                        var slot: Slot = handle;
+                        helpers.freeSlot(&slot, self.alloc);
+                    },
+                    .closed, .timeout => {},
+                },
+                .timer => {},
+            }
+        }
+    }
+};
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh1: MailboxHandle = try mailbox.new(io, allocator);
     const mbh2: MailboxHandle = try mailbox.new(io, allocator);
@@ -40,56 +96,15 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         mailbox.destroy(mbh2, allocator);
     }
 
-    const sleep_t: std.Io.Timeout = .{
-        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
-    };
-
     var buf: [8]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
+    var ctx: Ctx = .{ .mbh1 = mbh1, .mbh2 = mbh2, .alloc = allocator, .io = io };
+    try ctx.setupSelect(&sel);
+    try Ctx.awaitTimerFirst(&sel);
+    ctx.clearCanceled(&sel);
 
-    try sel.concurrent(.inbox1, mailbox.receiveResult, .{ mbh1, null });
-    try sel.concurrent(.inbox2, mailbox.receiveResult, .{ mbh2, null });
-    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
-
-    const first: MasterEvent = try sel.await();
-    switch (first) {
-        .timer => std.log.info("timer: canceling both inbox sources", .{}),
-        else => return error.SelectCancelCloseFailed,
-    }
-
-    var canceled1: bool = false;
-    var canceled2: bool = false;
-
-    while (sel.cancel()) |event| {
-        switch (event) {
-            .inbox1 => |r| switch (r) {
-                .canceled => {
-                    std.log.info("inbox1: .canceled", .{});
-                    canceled1 = true;
-                },
-                .item => |handle| {
-                    var slot: Slot = handle;
-                    helpers.freeSlot(&slot, allocator);
-                },
-                .closed, .timeout => {},
-            },
-            .inbox2 => |r| switch (r) {
-                .canceled => {
-                    std.log.info("inbox2: .canceled", .{});
-                    canceled2 = true;
-                },
-                .item => |handle| {
-                    var slot: Slot = handle;
-                    helpers.freeSlot(&slot, allocator);
-                },
-                .closed, .timeout => {},
-            },
-            .timer => {},
-        }
-    }
-
-    try helpers.expect(error.SelectCancelCloseFailed, canceled1 and canceled2, "expected both inboxes canceled");
-    std.log.info("done: timer fired, sel.cancel() stopped both inbox sources", .{});
+    try helpers.expect(error.SelectCancelCloseFailed, ctx.canceled1 and ctx.canceled2, "expected both inboxes canceled");
+    std.log.info("done: timer triggered, sel.cancel() stopped both inbox sources", .{});
 }
 
 const helpers = @import("helpers");

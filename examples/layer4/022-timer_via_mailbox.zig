@@ -69,6 +69,15 @@ fn sendEvents(mbh: MailboxHandle, alloc: std.mem.Allocator, count: usize) !void 
     }
 }
 
+fn spawnAndAwait(mbh: MailboxHandle, alloc: std.mem.Allocator, io: std.Io, worker_ctx: *WorkerCtx) !void {
+    var timer_ctx: TimerCtx = .{ .mbh = mbh, .alloc = alloc, .io = io };
+    var fut_timer = try io.concurrent(timerFn, .{&timer_ctx});
+    var fut_worker = try io.concurrent(workerFn, .{worker_ctx});
+    errdefer fut_worker.cancel(io) catch {};
+    try fut_timer.await(io);
+    try fut_worker.await(io);
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -79,19 +88,12 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
 
     try sendEvents(mbh, allocator, N_EVENTS);
 
-    var timer_ctx: TimerCtx = .{ .mbh = mbh, .alloc = allocator, .io = io };
     var worker_ctx: WorkerCtx = .{
         .mbh = mbh,
         .alloc = allocator,
         .expected = N_EVENTS + N_TICKS,
     };
-
-    var fut_timer = try io.concurrent(timerFn, .{&timer_ctx});
-    var fut_worker = try io.concurrent(workerFn, .{&worker_ctx});
-    errdefer fut_worker.cancel(io) catch {};
-
-    try fut_timer.await(io);
-    try fut_worker.await(io);
+    try spawnAndAwait(mbh, allocator, io, &worker_ctx);
 
     try helpers.expect(error.TimerViaMailboxFailed, worker_ctx.event_count == N_EVENTS, "expected 2 Events");
     try helpers.expect(error.TimerViaMailboxFailed, worker_ctx.timer_count == N_TICKS, "expected 2 timer ticks");

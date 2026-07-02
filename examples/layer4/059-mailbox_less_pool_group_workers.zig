@@ -19,16 +19,39 @@ const N_WORKERS: usize = 3;
 
 const WorkerCtx = struct {
     ph: PoolHandle,
-    id: usize, // spawn-time task index
+    id: usize,
 };
+
+fn seedContainers(ph: PoolHandle) !void {
+    for (0..N_WORKERS) |_| {
+        var slot: Slot = null;
+        try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
+        pool.put(ph, &slot);
+    }
+}
 
 fn workerFn(ctx: *WorkerCtx) error{Canceled}!void {
     var slot: Slot = null;
-    defer pool.put(ctx.ph, &slot); // null-safe: no-op if slot still null
+    defer pool.put(ctx.ph, &slot);
     pool.get(ctx.ph, types.EventPolyHelper.TAG, .available_or_new, &slot) catch return;
     const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-    ev.code = @intCast(ctx.id); // write spawn-time task index into empty container
+    ev.code = @intCast(ctx.id);
     std.log.info("worker {d}: wrote task index into empty container (code={d})", .{ ctx.id, ev.code });
+}
+
+fn spawnWorkers(ph: PoolHandle, io: std.Io, group: *Io.Group, ctxs: *[N_WORKERS]WorkerCtx) !void {
+    for (ctxs, 0..) |*ctx, i| {
+        ctx.* = .{ .ph = ph, .id = i };
+        try group.concurrent(io, workerFn, .{ctx});
+    }
+}
+
+fn stopAndClosePool(ph: PoolHandle, alloc: std.mem.Allocator, io: std.Io, group: *Io.Group) void {
+    group.cancel(io);
+    std.log.info("master: all workers stopped via group.cancel", .{});
+    pool.close(ph);
+    pool.destroy(ph, alloc);
+    std.log.info("pool closed: on_close freed any remaining containers — no mailbox needed", .{});
 }
 
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
@@ -37,32 +60,14 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const tags = [_]*const anyopaque{types.EventPolyHelper.TAG};
     try pool.init(ph, pool_ctx.poolHooks(&tags));
 
-    // Seed N_WORKERS empty containers — one per worker, so each gets one immediately.
-    for (0..N_WORKERS) |_| {
-        var slot: Slot = null;
-        try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
-        pool.put(ph, &slot);
-    }
+    try seedContainers(ph);
 
-    var ctx0: WorkerCtx = .{ .ph = ph, .id = 0 };
-    var ctx1: WorkerCtx = .{ .ph = ph, .id = 1 };
-    var ctx2: WorkerCtx = .{ .ph = ph, .id = 2 };
-
+    var worker_ctxs: [N_WORKERS]WorkerCtx = undefined;
     var group: Io.Group = .init;
-    try group.concurrent(io, workerFn, .{&ctx0});
-    try group.concurrent(io, workerFn, .{&ctx1});
-    try group.concurrent(io, workerFn, .{&ctx2});
+    try spawnWorkers(ph, io, &group, &worker_ctxs);
 
     std.log.info("master: {d} workers running, {d} empty containers in pool", .{ N_WORKERS, N_WORKERS });
-
-    // Cancel any workers that have not yet returned.
-    group.cancel(io);
-    std.log.info("master: all workers stopped via group.cancel", .{});
-
-    // All workers done — safe to close and destroy pool.
-    pool.close(ph);
-    pool.destroy(ph, allocator);
-    std.log.info("pool closed: on_close freed any remaining containers — no mailbox needed", .{});
+    stopAndClosePool(ph, allocator, io, &group);
 }
 
 const helpers = @import("helpers");

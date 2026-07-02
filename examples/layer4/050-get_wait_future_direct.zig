@@ -17,18 +17,7 @@ fn seedPool(ph: PoolHandle) !void {
     pool.put(ph, &slot);
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
-    const ph: PoolHandle = try pool.new(io, allocator);
-    var pool_ctx: helpers.AlwaysCreateCtx = .{ .alloc = allocator };
-    const tags = [_]*const anyopaque{types.EventPolyHelper.TAG};
-    try pool.init(ph, pool_ctx.poolHooks(&tags));
-    defer {
-        pool.close(ph);
-        pool.destroy(ph, allocator);
-    }
-
-    try seedPool(ph);
-
+fn receiveViaFuture(ph: PoolHandle, io: std.Io) !void {
     var fut: std.Io.Future(pool.PoolResult) = try pool.get_wait_future(ph, types.EventPolyHelper.TAG, null);
     const result: pool.PoolResult = fut.await(io);
 
@@ -42,6 +31,20 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         },
         else => return error.GetWaitFutureDirectFailed,
     }
+}
+
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
+    const ph: PoolHandle = try pool.new(io, allocator);
+    var pool_ctx: helpers.AlwaysCreateCtx = .{ .alloc = allocator };
+    const tags = [_]*const anyopaque{types.EventPolyHelper.TAG};
+    try pool.init(ph, pool_ctx.poolHooks(&tags));
+    defer {
+        pool.close(ph);
+        pool.destroy(ph, allocator);
+    }
+
+    try seedPool(ph);
+    try receiveViaFuture(ph, io);
 }
 
 const helpers = @import("helpers");

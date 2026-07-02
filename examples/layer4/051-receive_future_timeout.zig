@@ -13,6 +13,38 @@
 
 const TIMEOUT_NS: u64 = 50_000_000; // 50 ms
 
+const Ctx = struct {
+    mbh: MailboxHandle,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+
+    fn receiveWithTimeout(self: *Ctx) !void {
+        var fut_t: std.Io.Future(mailbox.ReceiveResult) = try mailbox.receive_future(self.mbh, TIMEOUT_NS);
+        const r_timeout: mailbox.ReceiveResult = fut_t.await(self.io);
+        try helpers.expect(error.ReceiveFutureTimeoutFailed, r_timeout == .timeout, "expected .timeout");
+        std.log.info("receive_future timeout: got .timeout as expected", .{});
+    }
+
+    fn sendAndReceiveItem(self: *Ctx) !void {
+        var slot: Slot = null;
+        defer types.EventPolyHelper.destroy(self.alloc, &slot);
+        try types.EventPolyHelper.create(self.alloc, &slot);
+        types.EventPolyHelper.cast(slot.?).?.code = 5;
+        try mailbox.send(self.mbh, &slot);
+
+        var fut_item: std.Io.Future(mailbox.ReceiveResult) = try mailbox.receive_future(self.mbh, null);
+        const r_item: mailbox.ReceiveResult = fut_item.await(self.io);
+        switch (r_item) {
+            .item => |handle| {
+                var received: Slot = handle;
+                defer helpers.freeSlot(&received, self.alloc);
+                std.log.info("receive_future after timeout: got Event code={d}", .{types.EventPolyHelper.cast(received.?).?.code});
+            },
+            else => return error.ReceiveFutureTimeoutFailed,
+        }
+    }
+};
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -21,29 +53,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         mailbox.destroy(mbh, allocator);
     }
 
-    // Attempt receive on empty mailbox — expect .timeout.
-    var fut_t: std.Io.Future(mailbox.ReceiveResult) = try mailbox.receive_future(mbh, TIMEOUT_NS);
-    const r_timeout: mailbox.ReceiveResult = fut_t.await(io);
-    try helpers.expect(error.ReceiveFutureTimeoutFailed, r_timeout == .timeout, "expected .timeout");
-    std.log.info("receive_future timeout: got .timeout as expected", .{});
-
-    // Now send an item and receive it with no timeout.
-    var slot: Slot = null;
-    defer types.EventPolyHelper.destroy(allocator, &slot);
-    try types.EventPolyHelper.create(allocator, &slot);
-    types.EventPolyHelper.cast(slot.?).?.code = 5;
-    try mailbox.send(mbh, &slot);
-
-    var fut_item: std.Io.Future(mailbox.ReceiveResult) = try mailbox.receive_future(mbh, null);
-    const r_item: mailbox.ReceiveResult = fut_item.await(io);
-    switch (r_item) {
-        .item => |handle| {
-            var received: Slot = handle;
-            defer helpers.freeSlot(&received, allocator);
-            std.log.info("receive_future after timeout: got Event code={d}", .{types.EventPolyHelper.cast(received.?).?.code});
-        },
-        else => return error.ReceiveFutureTimeoutFailed,
-    }
+    var ctx: Ctx = .{ .mbh = mbh, .alloc = allocator, .io = io };
+    try ctx.receiveWithTimeout();
+    try ctx.sendAndReceiveItem();
 }
 
 const helpers = @import("helpers");

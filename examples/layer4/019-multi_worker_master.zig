@@ -24,6 +24,30 @@ fn workerFn(ctx: *WorkerCtx) error{Canceled}!void {
     }
 }
 
+fn spawnWorkers(mbh: MailboxHandle, alloc: std.mem.Allocator, io: std.Io, group: *Io.Group, ctxs: *[3]WorkerCtx) !void {
+    for (ctxs) |*ctx| {
+        ctx.* = .{ .mbh = mbh, .alloc = alloc };
+        try group.concurrent(io, workerFn, .{ctx});
+    }
+}
+
+fn sendItems(mbh: MailboxHandle, alloc: std.mem.Allocator) !void {
+    for (0..3) |i| {
+        var slot: Slot = null;
+        defer types.EventPolyHelper.destroy(alloc, &slot);
+        try types.EventPolyHelper.create(alloc, &slot);
+        types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
+        try mailbox.send(mbh, &slot);
+        std.log.info("master: sent Event code={d}", .{i + 1});
+    }
+}
+
+fn awaitAll(mbh: MailboxHandle, alloc: std.mem.Allocator, io: std.Io, group: *Io.Group) !void {
+    var remaining: std.DoublyLinkedList = mailbox.close(mbh);
+    helpers.freeList(&remaining, alloc);
+    try group.await(io);
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -32,31 +56,12 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         mailbox.destroy(mbh, allocator);
     }
 
-    var ctx1: WorkerCtx = .{ .mbh = mbh, .alloc = allocator };
-    var ctx2: WorkerCtx = .{ .mbh = mbh, .alloc = allocator };
-    var ctx3: WorkerCtx = .{ .mbh = mbh, .alloc = allocator };
-
+    var worker_ctxs: [3]WorkerCtx = undefined;
     var group: Io.Group = .init;
     defer group.cancel(io);
-
-    try group.concurrent(io, workerFn, .{&ctx1});
-    try group.concurrent(io, workerFn, .{&ctx2});
-    try group.concurrent(io, workerFn, .{&ctx3});
-
-    for (0..3) |i| {
-        var slot: Slot = null;
-        defer types.EventPolyHelper.destroy(allocator, &slot);
-        try types.EventPolyHelper.create(allocator, &slot);
-        types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
-        try mailbox.send(mbh, &slot);
-        std.log.info("master: sent Event code={d}", .{i + 1});
-    }
-
-    // Close signals all workers to stop: their next receive returns error.Closed.
-    var remaining: std.DoublyLinkedList = mailbox.close(mbh);
-    helpers.freeList(&remaining, allocator);
-
-    try group.await(io);
+    try spawnWorkers(mbh, allocator, io, &group, &worker_ctxs);
+    try sendItems(mbh, allocator);
+    try awaitAll(mbh, allocator, io, &group);
     std.log.info("master: all workers done", .{});
 }
 

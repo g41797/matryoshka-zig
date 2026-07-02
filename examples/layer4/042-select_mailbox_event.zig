@@ -27,6 +27,62 @@ fn sleepFn(sleep_t: std.Io.Timeout, io: std.Io) void {
     std.Io.Timeout.sleep(sleep_t, io) catch {};
 }
 
+const Ctx = struct {
+    mbh: MailboxHandle,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    received: usize = 0,
+    ticks: usize = 0,
+
+    fn seedMailbox(self: *Ctx) !void {
+        for (0..N_ITEMS) |i| {
+            var slot: Slot = null;
+            defer types.EventPolyHelper.destroy(self.alloc, &slot);
+            try types.EventPolyHelper.create(self.alloc, &slot);
+            types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
+            try mailbox.send(self.mbh, &slot);
+        }
+    }
+
+    fn setupSelect(self: *Ctx, sel: *std.Io.Select(MasterEvent)) !void {
+        const sleep_t: std.Io.Timeout = .{
+            .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+        };
+        try sel.concurrent(.inbox, mailbox.receiveResult, .{ self.mbh, null });
+        try sel.concurrent(.timer, sleepFn, .{ sleep_t, self.io });
+    }
+
+    fn runEventLoop(self: *Ctx, sel: *std.Io.Select(MasterEvent)) !void {
+        while (self.received < N_ITEMS) {
+            const event: MasterEvent = try sel.await();
+            switch (event) {
+                .inbox => |r| switch (r) {
+                    .item => |handle| {
+                        var slot: Slot = handle;
+                        defer helpers.freeSlot(&slot, self.alloc);
+                        const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
+                        self.received += 1;
+                        std.log.info("inbox: Event code={d} ({d}/{d})", .{ ev.code, self.received, N_ITEMS });
+                        if (self.received < N_ITEMS) {
+                            try sel.concurrent(.inbox, mailbox.receiveResult, .{ self.mbh, null });
+                        }
+                    },
+                    .closed, .canceled, .timeout => break,
+                },
+                .timer => {
+                    self.ticks += 1;
+                    std.log.info("timer: tick {d}", .{self.ticks});
+                    const sleep_t: std.Io.Timeout = .{
+                        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
+                    };
+                    try sel.concurrent(.timer, sleepFn, .{ sleep_t, self.io });
+                },
+            }
+        }
+        sel.cancelDiscard();
+    }
+};
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -35,55 +91,16 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         mailbox.destroy(mbh, allocator);
     }
 
-    for (0..N_ITEMS) |i| {
-        var slot: Slot = null;
-        defer types.EventPolyHelper.destroy(allocator, &slot);
-        try types.EventPolyHelper.create(allocator, &slot);
-        types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
-        try mailbox.send(mbh, &slot);
-    }
-
-    const sleep_t: std.Io.Timeout = .{
-        .duration = .{ .raw = .{ .nanoseconds = TIMER_NS }, .clock = .real },
-    };
+    var ctx: Ctx = .{ .mbh = mbh, .alloc = allocator, .io = io };
+    try ctx.seedMailbox();
 
     var buf: [4]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
+    try ctx.setupSelect(&sel);
+    try ctx.runEventLoop(&sel);
 
-    try sel.concurrent(.inbox, mailbox.receiveResult, .{ mbh, null });
-    try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
-
-    var received: usize = 0;
-    var ticks: usize = 0;
-
-    while (received < N_ITEMS) {
-        const event: MasterEvent = try sel.await();
-        switch (event) {
-            .inbox => |r| switch (r) {
-                .item => |handle| {
-                    var slot: Slot = handle;
-                    defer helpers.freeSlot(&slot, allocator);
-                    const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-                    received += 1;
-                    std.log.info("inbox: Event code={d} ({d}/{d})", .{ ev.code, received, N_ITEMS });
-                    if (received < N_ITEMS) {
-                        try sel.concurrent(.inbox, mailbox.receiveResult, .{ mbh, null });
-                    }
-                },
-                .closed, .canceled, .timeout => break,
-            },
-            .timer => {
-                ticks += 1;
-                std.log.info("timer: tick {d}", .{ticks});
-                try sel.concurrent(.timer, sleepFn, .{ sleep_t, io });
-            },
-        }
-    }
-
-    sel.cancelDiscard();
-
-    try helpers.expect(error.SelectMailboxEventFailed, received == N_ITEMS, "did not receive all items");
-    std.log.info("done: {d} items, {d} timer ticks", .{ received, ticks });
+    try helpers.expect(error.SelectMailboxEventFailed, ctx.received == N_ITEMS, "did not receive all items");
+    std.log.info("done: {d} items, {d} timer ticks", .{ ctx.received, ctx.ticks });
 }
 
 const helpers = @import("helpers");

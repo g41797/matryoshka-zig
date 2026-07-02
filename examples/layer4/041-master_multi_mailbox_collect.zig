@@ -15,49 +15,64 @@
 const N_A: usize = 2;
 const N_B: usize = 3;
 
+const Ctx = struct {
+    mbh_a: MailboxHandle,
+    mbh_b: MailboxHandle,
+    alloc: std.mem.Allocator,
+
+    fn fillMailboxA(self: *Ctx) !void {
+        for (0..N_A) |i| {
+            var slot: Slot = null;
+            defer types.EventPolyHelper.destroy(self.alloc, &slot);
+            try types.EventPolyHelper.create(self.alloc, &slot);
+            types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
+            try mailbox.send(self.mbh_a, &slot);
+        }
+    }
+
+    fn fillMailboxB(self: *Ctx) !void {
+        for (0..N_B) |i| {
+            var slot: Slot = null;
+            defer types.SensorPolyHelper.destroy(self.alloc, &slot);
+            try types.SensorPolyHelper.create(self.alloc, &slot);
+            types.SensorPolyHelper.cast(slot.?).?.value = @floatFromInt(i + 10);
+            try mailbox.send(self.mbh_b, &slot);
+        }
+    }
+
+    fn closeAndMerge(self: *Ctx) std.DoublyLinkedList {
+        var list_a: std.DoublyLinkedList = mailbox.close(self.mbh_a);
+        mailbox.destroy(self.mbh_a, self.alloc);
+        var list_b: std.DoublyLinkedList = mailbox.close(self.mbh_b);
+        mailbox.destroy(self.mbh_b, self.alloc);
+        list_a.concatByMoving(&list_b);
+        std.log.info("concatByMoving: combined list has {d} items", .{N_A + N_B});
+        return list_a;
+    }
+};
+
+fn collectAndFree(combined: *std.DoublyLinkedList, alloc: std.mem.Allocator) usize {
+    var freed: usize = 0;
+    while (combined.popFirst()) |node| {
+        const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
+        polynode.reset(poly);
+        helpers.freeItem(poly, alloc);
+        freed += 1;
+    }
+    return freed;
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh_a: MailboxHandle = try mailbox.new(io, allocator);
     const mbh_b: MailboxHandle = try mailbox.new(io, allocator);
 
-    // Fill mailbox_a.
-    for (0..N_A) |i| {
-        var slot: Slot = null;
-        defer types.EventPolyHelper.destroy(allocator, &slot);
-        try types.EventPolyHelper.create(allocator, &slot);
-        types.EventPolyHelper.cast(slot.?).?.code = @intCast(i + 1);
-        try mailbox.send(mbh_a, &slot);
-    }
-
-    // Fill mailbox_b with Sensor items.
-    for (0..N_B) |i| {
-        var slot: Slot = null;
-        defer types.SensorPolyHelper.destroy(allocator, &slot);
-        try types.SensorPolyHelper.create(allocator, &slot);
-        types.SensorPolyHelper.cast(slot.?).?.value = @floatFromInt(i + 10);
-        try mailbox.send(mbh_b, &slot);
-    }
-
+    var ctx: Ctx = .{ .mbh_a = mbh_a, .mbh_b = mbh_b, .alloc = allocator };
+    try ctx.fillMailboxA();
+    try ctx.fillMailboxB();
     std.log.info("before collect: {d} in mailbox_a, {d} in mailbox_b", .{ N_A, N_B });
 
-    // Close both mailboxes, collect their returned lists.
-    var list_a: std.DoublyLinkedList = mailbox.close(mbh_a);
-    mailbox.destroy(mbh_a, allocator);
-
-    var list_b: std.DoublyLinkedList = mailbox.close(mbh_b);
-    mailbox.destroy(mbh_b, allocator);
-
-    // Merge via concatByMoving — list_a absorbs list_b. list_b becomes empty.
-    list_a.concatByMoving(&list_b);
-    std.log.info("concatByMoving: combined list has {d} items", .{N_A + N_B});
-
-    // Walk the combined list — one pass cleans up items from both mailboxes.
-    var freed: usize = 0;
-    while (list_a.popFirst()) |node| {
-        const poly: *polynode.PolyNode = @fieldParentPtr("node", node);
-        polynode.reset(poly);
-        helpers.freeItem(poly, allocator);
-        freed += 1;
-    }
+    var combined: std.DoublyLinkedList = ctx.closeAndMerge();
+    const freed = collectAndFree(&combined, allocator);
 
     try helpers.expect(error.MasterMultiMailboxFailed, freed == N_A + N_B, "freed count mismatch");
     std.log.info("done: {d} items from {d} mailboxes — stdlib concatByMoving + popFirst walk", .{ freed, 2 });

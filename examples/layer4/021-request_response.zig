@@ -61,6 +61,15 @@ fn masterBFn(ctx: *MasterBCtx) anyerror!void {
     std.log.info("master B: sent Sensor response value={d}", .{response_value});
 }
 
+fn runMasters(a_inbox: MailboxHandle, b_inbox: MailboxHandle, alloc: std.mem.Allocator, io: std.Io) !void {
+    var ctx_a: MasterACtx = .{ .a_inbox = a_inbox, .b_inbox = b_inbox, .alloc = alloc };
+    var ctx_b: MasterBCtx = .{ .a_inbox = a_inbox, .b_inbox = b_inbox, .alloc = alloc };
+    var fut_a = try io.concurrent(masterAFn, .{&ctx_a});
+    var fut_b = try io.concurrent(masterBFn, .{&ctx_b});
+    try fut_a.await(io);
+    try fut_b.await(io);
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const a_inbox: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -76,15 +85,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         mailbox.destroy(b_inbox, allocator);
     }
 
-    var ctx_a: MasterACtx = .{ .a_inbox = a_inbox, .b_inbox = b_inbox, .alloc = allocator };
-    var ctx_b: MasterBCtx = .{ .a_inbox = a_inbox, .b_inbox = b_inbox, .alloc = allocator };
-
-    var fut_a = try io.concurrent(masterAFn, .{&ctx_a});
-    var fut_b = try io.concurrent(masterBFn, .{&ctx_b});
-
-    try fut_a.await(io);
-    try fut_b.await(io);
-
+    try runMasters(a_inbox, b_inbox, allocator, io);
     std.log.info("request-response done: both masters completed", .{});
 }
 

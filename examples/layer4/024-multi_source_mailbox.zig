@@ -78,6 +78,39 @@ fn workerFn(ctx: *WorkerCtx) anyerror!void {
     }
 }
 
+const Futs = struct {
+    timer: Io.Future(anyerror!void),
+    events: Io.Future(anyerror!void),
+    signal: Io.Future(anyerror!void),
+    worker: Io.Future(anyerror!void),
+};
+
+const Ctx = struct {
+    mbh: MailboxHandle,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+
+    fn spawnSenders(self: *Ctx, sender_ctx: *SenderCtx, worker_ctx: *WorkerCtx) !Futs {
+        return .{
+            .timer = try self.io.concurrent(timerSenderFn, .{sender_ctx}),
+            .events = try self.io.concurrent(eventSenderFn, .{sender_ctx}),
+            .signal = try self.io.concurrent(signalSenderFn, .{sender_ctx}),
+            .worker = try self.io.concurrent(workerFn, .{worker_ctx}),
+        };
+    }
+
+    fn awaitSendersAndClose(self: *Ctx, futs: *Futs) void {
+        futs.timer.await(self.io) catch {};
+        futs.events.await(self.io) catch {};
+        futs.signal.await(self.io) catch {};
+
+        var remaining: std.DoublyLinkedList = mailbox.close(self.mbh);
+        helpers.freeList(&remaining, self.alloc);
+
+        futs.worker.await(self.io) catch {};
+    }
+};
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -88,21 +121,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
 
     var sender_ctx: SenderCtx = .{ .mbh = mbh, .alloc = allocator, .io = io };
     var worker_ctx: WorkerCtx = .{ .mbh = mbh, .alloc = allocator };
-
-    var fut_timer = try io.concurrent(timerSenderFn, .{&sender_ctx});
-    var fut_events = try io.concurrent(eventSenderFn, .{&sender_ctx});
-    var fut_signal = try io.concurrent(signalSenderFn, .{&sender_ctx});
-    var fut_worker = try io.concurrent(workerFn, .{&worker_ctx});
-
-    // Wait for all senders to finish, then close mailbox to stop worker.
-    fut_timer.await(io) catch {};
-    fut_events.await(io) catch {};
-    fut_signal.await(io) catch {};
-
-    var remaining: std.DoublyLinkedList = mailbox.close(mbh);
-    helpers.freeList(&remaining, allocator);
-
-    fut_worker.await(io) catch {};
+    var ctx: Ctx = .{ .mbh = mbh, .alloc = allocator, .io = io };
+    var futs = try ctx.spawnSenders(&sender_ctx, &worker_ctx);
+    ctx.awaitSendersAndClose(&futs);
 
     std.log.info("done: {d} events, {d} timer ticks, {d} signals — fan-in to one mailbox", .{
         worker_ctx.event_count,
@@ -118,4 +139,5 @@ const mailbox = matryoshka.mailbox;
 const polynode = matryoshka.polynode;
 const Slot = polynode.Slot;
 const MailboxHandle = mailbox.MailboxHandle;
+const Io = std.Io;
 const types = helpers.types;

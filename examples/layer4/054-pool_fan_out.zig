@@ -36,6 +36,20 @@ fn seedPool(ph: PoolHandle) !void {
     }
 }
 
+fn spawnAndAwaitWorkers(ph: PoolHandle, alloc: std.mem.Allocator, io: std.Io) !void {
+    var ctx1: WorkerCtx = .{ .ph = ph, .alloc = alloc };
+    var ctx2: WorkerCtx = .{ .ph = ph, .alloc = alloc };
+    var ctx3: WorkerCtx = .{ .ph = ph, .alloc = alloc };
+    var fut1 = try io.concurrent(workerFn, .{&ctx1});
+    var fut2 = try io.concurrent(workerFn, .{&ctx2});
+    var fut3 = try io.concurrent(workerFn, .{&ctx3});
+    try fut1.await(io);
+    try fut2.await(io);
+    try fut3.await(io);
+    const all_got = ctx1.got and ctx2.got and ctx3.got;
+    try helpers.expect(error.PoolFanOutFailed, all_got, "not all workers got an item");
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const ph: PoolHandle = try pool.new(io, allocator);
     var pool_ctx: helpers.AlwaysCreateCtx = .{ .alloc = allocator };
@@ -47,21 +61,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     }
 
     try seedPool(ph);
-
-    var ctx1: WorkerCtx = .{ .ph = ph, .alloc = allocator };
-    var ctx2: WorkerCtx = .{ .ph = ph, .alloc = allocator };
-    var ctx3: WorkerCtx = .{ .ph = ph, .alloc = allocator };
-
-    var fut1 = try io.concurrent(workerFn, .{&ctx1});
-    var fut2 = try io.concurrent(workerFn, .{&ctx2});
-    var fut3 = try io.concurrent(workerFn, .{&ctx3});
-
-    try fut1.await(io);
-    try fut2.await(io);
-    try fut3.await(io);
-
-    const all_got = ctx1.got and ctx2.got and ctx3.got;
-    try helpers.expect(error.PoolFanOutFailed, all_got, "not all workers got an item");
+    try spawnAndAwaitWorkers(ph, allocator, io);
     std.log.info("fan-out: 1 pool seeded with 3 items → 3 workers each got 1", .{});
 }
 

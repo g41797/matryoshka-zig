@@ -29,6 +29,31 @@ fn onClose(ctx_opaque: *anyopaque, list: *std.DoublyLinkedList) void {
     std.log.info("on_close: closed and destroyed {d} inner pool(s)", .{ctx.closed_count});
 }
 
+const Ctx = struct {
+    carrier: PoolHandle,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+
+    fn createAndStoreInnerPools(self: *Ctx, n: usize) !void {
+        var j: usize = 0;
+        while (j < n) : (j += 1) {
+            const inner: PoolHandle = try pool.new(self.io, self.alloc);
+            var slot: Slot = inner;
+            pool.put(self.carrier, &slot);
+            try helpers.expect(error.PoolAsItemFailed, slot == null, "carrier did not accept inner pool");
+            std.log.info("stored inner pool {d} in carrier", .{j + 1});
+        }
+    }
+
+    fn closeCarrier(self: *Ctx, carrier_ctx: *CarrierCtx, n: usize) !void {
+        // Tag dispatch is not needed here: all items are PoolHandles by construction.
+        pool.close(self.carrier);
+        try helpers.expect(error.PoolAsItemFailed, carrier_ctx.closed_count == n, "wrong number of inner pools cleaned up");
+        std.log.info("carrier closed: {d} inner pool(s) cleaned up", .{carrier_ctx.closed_count});
+        pool.destroy(self.carrier, self.alloc);
+    }
+};
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     // Carrier pool — holds inner PoolHandles as items.
     const carrier: PoolHandle = try pool.new(io, allocator);
@@ -42,26 +67,10 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
         .on_close = onClose,
     });
 
-    // Create 2 inner pools and store them in the carrier.
     const n: usize = 2;
-    var j: usize = 0;
-    while (j < n) : (j += 1) {
-        const inner: PoolHandle = try pool.new(io, allocator);
-        var slot: Slot = inner;
-        pool.put(carrier, &slot);
-        try helpers.expect(error.PoolAsItemFailed, slot == null, "carrier did not accept inner pool");
-        std.log.info("stored inner pool {d} in carrier", .{j + 1});
-    }
-
-    // Close carrier — on_close receives both inner pools and frees them.
-    // Tag dispatch is not needed here: all items are PoolHandles by construction.
-    pool.close(carrier);
-
-    try helpers.expect(error.PoolAsItemFailed, carrier_ctx.closed_count == n, "wrong number of inner pools cleaned up");
-
-    std.log.info("carrier closed: {d} inner pool(s) cleaned up", .{carrier_ctx.closed_count});
-
-    pool.destroy(carrier, allocator);
+    var ctx: Ctx = .{ .carrier = carrier, .alloc = allocator, .io = io };
+    try ctx.createAndStoreInnerPools(n);
+    try ctx.closeCarrier(&carrier_ctx, n);
 }
 
 const helpers = @import("helpers");

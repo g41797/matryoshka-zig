@@ -18,8 +18,11 @@
 
 const N: usize = 3;
 
-// Master's own job list — separate from pool containers.
 const jobs = [N]i32{ 10, 20, 30 };
+
+const MasterEvent = union(enum) {
+    pool_ev: pool.PoolResult,
+};
 
 const WorkerCtx = struct {
     mbh: MailboxHandle,
@@ -30,11 +33,65 @@ fn workerFn(ctx: *WorkerCtx) anyerror!void {
     while (true) {
         var slot: Slot = null;
         mailbox.receive(ctx.mbh, &slot, null) catch return;
-        defer pool.put(ctx.ph, &slot); // return container to pool after processing
+        defer pool.put(ctx.ph, &slot);
         const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-        ev.code *= 2; // process: double the job value
+        ev.code *= 2;
         std.log.info("worker: processed job, result code={d}", .{ev.code});
     }
+}
+
+const Ctx = struct {
+    mbh: MailboxHandle,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+
+    fn spawnWorkerAndSetupSelect(self: *Ctx, ph: PoolHandle, worker_ctx: *WorkerCtx, sel: *std.Io.Select(MasterEvent)) !Io.Future(anyerror!void) {
+        const fut = try self.io.concurrent(workerFn, .{worker_ctx});
+        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+        return fut;
+    }
+
+    fn runEventLoop(self: *Ctx, ph: PoolHandle, sel: *std.Io.Select(MasterEvent), job_idx: *usize, completed: *usize) !void {
+        while (true) {
+            const event: MasterEvent = try sel.await();
+            switch (event) {
+                .pool_ev => |r| switch (r) {
+                    .item => |handle| {
+                        if (job_idx.* < N) {
+                            var slot: Slot = handle;
+                            const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
+                            ev.code = jobs[job_idx.*];
+                            std.log.info("master: dispatching job {d} (code={d})", .{ job_idx.*, ev.code });
+                            job_idx.* += 1;
+                            try mailbox.send(self.mbh, &slot);
+                            try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+                        } else {
+                            const ev: *types.Event = types.EventPolyHelper.cast(handle).?;
+                            completed.* = job_idx.*;
+                            std.log.info("master: last result code={d}, all {d} jobs complete", .{ ev.code, completed.* });
+                            var slot: Slot = handle;
+                            pool.put(ph, &slot);
+                            break;
+                        }
+                    },
+                    .closed, .canceled, .timeout, .not_created => break,
+                },
+            }
+        }
+        sel.cancelDiscard();
+    }
+
+    fn closeMailboxAndAwait(self: *Ctx, worker_fut: *Io.Future(anyerror!void)) !void {
+        var rem: std.DoublyLinkedList = mailbox.close(self.mbh);
+        helpers.freeList(&rem, self.alloc);
+        try worker_fut.await(self.io);
+    }
+};
+
+fn seedContainer(ph: PoolHandle) !void {
+    var slot: Slot = null;
+    try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
+    pool.put(ph, &slot);
 }
 
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
@@ -48,63 +105,21 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     }
 
     const mbh: MailboxHandle = try mailbox.new(io, allocator);
-    defer mailbox.destroy(mbh, allocator); // close handled explicitly before worker await
+    defer mailbox.destroy(mbh, allocator);
 
-    // Seed 1 empty container to start the circular flow.
-    {
-        var slot: Slot = null;
-        try pool.get(ph, types.EventPolyHelper.TAG, .new_only, &slot);
-        pool.put(ph, &slot);
-    }
+    try seedContainer(ph);
 
-    var ctx: WorkerCtx = .{ .mbh = mbh, .ph = ph };
-    var worker_fut = try io.concurrent(workerFn, .{&ctx});
-
-    const MasterEvent = union(enum) {
-        pool_ev: pool.PoolResult,
-    };
+    var ctx: Ctx = .{ .mbh = mbh, .alloc = allocator, .io = io };
+    var worker_ctx: WorkerCtx = .{ .mbh = mbh, .ph = ph };
     var buf: [4]MasterEvent = undefined;
     var sel: std.Io.Select(MasterEvent) = std.Io.Select(MasterEvent).init(io, &buf);
-    try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
+    var worker_fut = try ctx.spawnWorkerAndSetupSelect(ph, &worker_ctx, &sel);
 
-    var job_idx: usize = 0; // index into Master's job list
-    var completed: usize = 0; // completed jobs tracked by Master counter
+    var job_idx: usize = 0;
+    var completed: usize = 0;
+    try ctx.runEventLoop(ph, &sel, &job_idx, &completed);
 
-    while (true) {
-        const event: MasterEvent = try sel.await();
-        switch (event) {
-            .pool_ev => |r| switch (r) {
-                .item => |handle| {
-                    if (job_idx < N) {
-                        // Container available — fill from Master's job list and dispatch.
-                        var slot: Slot = handle;
-                        const ev: *types.Event = types.EventPolyHelper.cast(slot.?).?;
-                        ev.code = jobs[job_idx];
-                        std.log.info("master: dispatching job {d} (code={d})", .{ job_idx, ev.code });
-                        job_idx += 1;
-                        try mailbox.send(mbh, &slot);
-                        try sel.concurrent(.pool_ev, pool.getWaitResult, .{ ph, types.EventPolyHelper.TAG, null });
-                    } else {
-                        // All jobs sent; worker returned the last container.
-                        const ev: *types.Event = types.EventPolyHelper.cast(handle).?;
-                        completed = job_idx;
-                        std.log.info("master: last result code={d}, all {d} jobs complete", .{ ev.code, completed });
-                        var slot: Slot = handle;
-                        pool.put(ph, &slot); // return final container to pool
-                        break;
-                    }
-                },
-                .closed, .canceled, .timeout, .not_created => break,
-            },
-        }
-    }
-
-    sel.cancelDiscard();
-
-    // Close mailbox to signal worker to stop, then walk any remaining items.
-    var rem: std.DoublyLinkedList = mailbox.close(mbh);
-    helpers.freeList(&rem, allocator);
-    try worker_fut.await(io);
+    try ctx.closeMailboxAndAwait(&worker_fut);
 
     try helpers.expect(error.JobPoolCircularFailed, completed == N, "did not complete all jobs");
     std.log.info("done: {d} jobs — Master list → pool container → mailbox → worker → pool (circular)", .{completed});
@@ -119,4 +134,5 @@ const polynode = matryoshka.polynode;
 const Slot = polynode.Slot;
 const MailboxHandle = mailbox.MailboxHandle;
 const PoolHandle = pool.PoolHandle;
+const Io = std.Io;
 const types = helpers.types;

@@ -32,10 +32,10 @@
 - Legacy mailbox: /home/g41797/dev/root/github.com/g41797/mailbox/
 - Odin proto: /home/g41797/dev/root/github.com/g41797/matryoshka/
 - tofu (build infra): /home/g41797/dev/root/github.com/g41797/tofu/
-- Plan: matryoshka-io-implementation-plan-027.md (slim, state-only)
-- Rules: rules-006.md
+- Plan: matryoshka-io-implementation-plan-028.md (slim, state-only)
+- Rules: rules-007.md
 - Thinking model: matryoshka-model-003.md
-- Patterns: patterns-005.md
+- Patterns: patterns-006.md
 - Docs plan: matryoshka-io-docs-plan-001.md
 
 ## Participants
@@ -115,11 +115,117 @@ EXMPL 2 — Master pattern: pilot (scenario 18) + doc update. DONE. Plan version
 EXMPL 3a — 7 semantic rewrites (scenarios 46,47,53,56,57,58,59). DONE. Plan version 024 created.
 EXMPL 3b — Rename NNN- prefix + Master pattern (6 files). DONE. Plan version 025 created.
 EXMPL 3c — Observable by human rule + 3 Master fixes. DONE. Plan version 026 created.
-EXMPL 3d — Observable: extract steps in 35 flat examples. NEXT.
+EXMPL 3d — Observable: extract steps in 31 flat examples. DONE. Plan version 027 created.
+EXMPL 3e — Observable: structural extraction signals + fix 24 violating examples. DONE. Plan version 028 created.
 Stage 9 — Docs + README + autodocs. PLANNED.
-Current: 161/161 tests. EXMPL 3d not started.
+Current: 161/161 tests. EXMPL 3e DONE.
 
 ## Session Log
+
+### 2026-07-02 — EXMPL 3e (Observable: structural extraction signals + fix 24 violating examples)
+**Participants**: human + Claude
+
+**Summary**
+Full audit after EXMPL 3d revealed 24 remaining Observable violations across 47 layer4 files — none had section comments, so the heuristic signal missed them. Root cause: the rule was subjective. EXMPL 3e adds four objective structural extraction signals to rules-007.md and fixes all 24 violating files.
+
+New structural extraction signals (rules-007.md, added to Observable by human — MUST).
+- 1. Any `while` loop with a `switch` body in a coordinator → `runEventLoop`.
+- 2. Any `Io.Select` setup block (`buf` + `sel.init` + `sel.concurrent`) → `setupSelect`.
+- 3. Any cluster of `io.concurrent` / `group.concurrent` / `Thread.spawn` calls → `spawnWorkers` etc.
+- 4. Any for-loop or sequential send/fill/seed block → `sendItems`, `fillMailbox`, etc.
+
+New checklist item 10 (rules-007.md): rules audit after every stage that changes *.zig or *.md.
+
+New coordinator templates (patterns-006.md): Select event loop + spawn+await coordinator shapes.
+
+Parameter rule for step functions.
+- 1–2 coordinator params → explicit params on free functions.
+- 3+ coordinator params → new local `const Ctx = struct { ... }` (stack-allocated); steps are struct methods.
+
+Ctx lifetime rule.
+- Step spawns workers that run after return → ctxs declared at coordinator scope, passed as array pointer.
+- Step awaits before return → ctxs declared inside the step (safe; no dangling pointer).
+
+**Changes**
+- `design/rules-007.md` — new version; structural extraction signals + checklist item 10
+- `design/patterns-006.md` — new version; Select event loop + spawn+await coordinator templates
+- `design/matryoshka-io-implementation-plan-028.md` — new plan version; EXMPL 3e DONE
+- Group A (event loop): 025, 026, 028, 042, 044, 045, 046, 058, 060, 061
+- Group B (spawn/await): 017, 019, 021, 022, 054
+- Group C (mixed): 024, 056, 059, 095
+- Group D (minor): 029, 043, 049, 050
+- `design/context.md` — rules → 007, patterns → 006, plan → 028
+- `design/STATUS.md` — sources updated; EXMPL 3e stage line; this entry
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| build_and_test_debug.sh | PASS (161/161) |
+| build_and_test_all.sh | PASS (161/161 × 4 modes) |
+| build_cross_debug.sh | PASS (x86_64-macos, aarch64-macos, x86_64-windows) |
+| Post-stage cleanup | done — see below |
+| AI-sh + banned words scan | CLEAN (5 new violations fixed) |
+| Full layer4 audit | CLEAN (47/47 PASS after 2 post-audit fixes) |
+
+**Post-stage cleanup**
+AI-sh scan — 5 new violations introduced by EXMPL 3e, all fixed.
+- `026`: `fires first` → `triggers first` in ownership diagram.
+- `026`: `timer fired` → `timer triggered` in coordinator log.
+- `044`: `fires first` → `triggers first` in ownership diagram.
+- `025`: `fires first` → `triggers first` in ownership diagram.
+- `025`: `fires before` → `triggers before` in SHORT_NS comment.
+- `026`, `045`: `drainCanceled` → `clearCanceled` (function name contained `drain`).
+
+Full layer4 audit — 2 violations found and fixed after initial kitchen run.
+- `026`: inline `sel.await()` + `switch` block extracted to `Ctx.awaitTimerFirst` static method.
+- `043`: inline `sel.await()` + `switch` + shutdown block extracted to `awaitDirectPushAndShutdown`.
+Post-fix kitchen re-run: 161/161 PASS.
+
+Pre-existing violations in non-changed files (owner to decide).
+- `patterns-006.md:428` — `delivers` carried from patterns-005.md; in prose describing Select source behavior.
+
+**Next**: Stage 9 — Docs + README + autodocs.
+
+---
+
+### 2026-07-02 — EXMPL 3d (Observable: extract steps from flat examples)
+**Participants**: human + Claude
+
+**Summary**
+Extract section-comment-marked blocks from 31 flat layer4 example files into named private step functions. `pub fn run` becomes a thin coordinator in each file.
+
+Parameter rule (owner-approved): pass 1-2 coordinator-scope params explicitly; if any step needs 3+ coordinator-scope params, introduce a local `const Ctx = struct { ... }` (stack-allocated, no heap). Steps become methods inside the Ctx struct body.
+
+Files skipped (section comments that don't warrant extraction):
+- `019` — close API behavior; 1-2 line comment on single operation
+- `043` — two 1-line operation comments (common-sense inline)
+- `044` — comment inside defer block explaining double-close behavior
+
+**Extraction approach**
+Explicit-param files (17): step functions declared at file scope, take 1-2 coordinator-scope params directly.
+Struct files (14): `const Ctx = struct { ... fn step(self: *Ctx) ... };` declared at file scope; `run` creates `var ctx: Ctx = .{...}` and calls `ctx.step()`.
+
+Key technical note: Zig method-call syntax `ctx.method()` requires the function to be declared inside the struct body, not at file scope. Methods use `self: *Ctx` as the first parameter.
+
+**Changes**
+Explicit-param files: 022, 023, 028, 029, 033, 036, 039, 040, 046, 050, 052, 054, 057, 058, 059, 060, 095
+Struct files: 024, 025, 030, 032, 034, 035, 037, 038, 041, 051, 055, 056, 061, 096
+Doc: `design/matryoshka-io-implementation-plan-027.md` — EXMPL 3d DONE
+
+**Verification**
+
+| Check | Result |
+| :---- | :----- |
+| build_and_test_debug.sh | PASS (161/161) |
+| build_and_test_all.sh | PASS (161/161 × 4 modes) |
+| build_cross_debug.sh | PASS (x86_64-macos, aarch64-macos, x86_64-windows) |
+| Post-stage cleanup | AI-sh scan — no violations |
+| AI-sh + banned words scan | CLEAN |
+
+**Next**: Stage 9 — Docs + README + autodocs.
+
+---
 
 ### 2026-07-01 — EXMPL 3c (Observable by human rule + 3 Master fixes)
 **Participants**: human + Claude

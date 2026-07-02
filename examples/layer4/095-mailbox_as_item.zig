@@ -17,6 +17,13 @@ const WorkerCtx = struct {
     processed: usize = 0,
 };
 
+fn cleanupReturnedMailbox(slot: *Slot, alloc: std.mem.Allocator) void {
+    const returned: MailboxHandle = slot.*.?;
+    _ = mailbox.close(returned);
+    mailbox.destroy(returned, alloc);
+    slot.* = null;
+}
+
 fn workerFn(ctx: *WorkerCtx) void {
     while (true) {
         var slot: Slot = null;
@@ -26,10 +33,9 @@ fn workerFn(ctx: *WorkerCtx) void {
 
         if (types.ShutdownCommandPolyHelper.cast(poly) != null) {
             helpers.freeSlot(&slot, ctx.alloc);
-            // Send our mailbox back to master — this IS the finish signal.
             slot = ctx.worker_mbh;
             mailbox.send(ctx.master_inbox, &slot) catch {};
-            slot = null; // prevent defer from destroying the mailbox handle
+            slot = null;
             return;
         }
 
@@ -41,6 +47,41 @@ fn workerFn(ctx: *WorkerCtx) void {
     }
 }
 
+fn sendJobsAndShutdown(worker_mbh: MailboxHandle, alloc: std.mem.Allocator) !void {
+    var i: usize = 0;
+    while (i < 3) : (i += 1) {
+        var slot: Slot = null;
+        defer types.EventPolyHelper.destroy(alloc, &slot);
+        try types.EventPolyHelper.create(alloc, &slot);
+        types.EventPolyHelper.cast(slot.?).?.code = @as(i32, @intCast(i + 1));
+        try mailbox.send(worker_mbh, &slot);
+    }
+
+    var slot: Slot = null;
+    defer types.ShutdownCommandPolyHelper.destroy(alloc, &slot);
+    try types.ShutdownCommandPolyHelper.create(alloc, &slot);
+    try mailbox.send(worker_mbh, &slot);
+
+    std.log.info("master: sent 3 Events + ShutdownCommand to worker", .{});
+}
+
+fn spawnWorker(master_inbox: MailboxHandle, worker_mbh: MailboxHandle, ctx: *WorkerCtx, alloc: std.mem.Allocator) !std.Thread {
+    ctx.* = .{ .master_inbox = master_inbox, .worker_mbh = worker_mbh, .alloc = alloc };
+    return std.Thread.spawn(.{}, workerFn, .{ctx});
+}
+
+fn receiveAndVerify(master_inbox: MailboxHandle, worker_mbh: MailboxHandle, alloc: std.mem.Allocator) !void {
+    var slot: Slot = null;
+    defer if (slot) |mh| {
+        _ = mailbox.close(mh);
+        mailbox.destroy(mh, alloc);
+    };
+    try mailbox.receive(master_inbox, &slot, null);
+    try helpers.expect(error.WorkerFinishFailed, mailbox.is_it_you(slot.?.*.tag), "expected a MailboxHandle");
+    try helpers.expect(error.WorkerFinishFailed, slot.? == worker_mbh, "wrong mailbox returned");
+    cleanupReturnedMailbox(&slot, alloc);
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const master_inbox: MailboxHandle = try mailbox.new(io, allocator);
     defer {
@@ -50,50 +91,14 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
 
     const worker_mbh: MailboxHandle = try mailbox.new(io, allocator);
 
-    var i: usize = 0;
-    while (i < 3) : (i += 1) {
-        var slot: Slot = null;
-        defer types.EventPolyHelper.destroy(allocator, &slot);
-        try types.EventPolyHelper.create(allocator, &slot);
-        types.EventPolyHelper.cast(slot.?).?.code = @as(i32, @intCast(i + 1));
-        try mailbox.send(worker_mbh, &slot);
-    }
+    try sendJobsAndShutdown(worker_mbh, allocator);
 
-    {
-        var slot: Slot = null;
-        defer types.ShutdownCommandPolyHelper.destroy(allocator, &slot);
-        try types.ShutdownCommandPolyHelper.create(allocator, &slot);
-        try mailbox.send(worker_mbh, &slot);
-    }
+    var worker_ctx: WorkerCtx = undefined;
+    const t = try spawnWorker(master_inbox, worker_mbh, &worker_ctx, allocator);
 
-    std.log.info("master: sent 3 Events + ShutdownCommand to worker", .{});
+    try receiveAndVerify(master_inbox, worker_mbh, allocator);
+    std.log.info("master: received worker_mbh back — worker finished (processed={d})", .{worker_ctx.processed});
 
-    var ctx: WorkerCtx = .{
-        .master_inbox = master_inbox,
-        .worker_mbh = worker_mbh,
-        .alloc = allocator,
-    };
-    const t = try std.Thread.spawn(.{}, workerFn, .{&ctx});
-
-    var slot: Slot = null;
-    defer if (slot) |mh| {
-        _ = mailbox.close(mh);
-        mailbox.destroy(mh, allocator);
-    };
-    try mailbox.receive(master_inbox, &slot, null);
-
-    try helpers.expect(error.WorkerFinishFailed, mailbox.is_it_you(slot.?.*.tag), "expected a MailboxHandle");
-    try helpers.expect(error.WorkerFinishFailed, slot.? == worker_mbh, "wrong mailbox returned");
-
-    std.log.info("master: received worker_mbh back — worker finished (processed={d})", .{ctx.processed});
-
-    // Master owns cleanup of worker_mbh.
-    const returned: MailboxHandle = slot.?;
-    _ = mailbox.close(returned);
-    mailbox.destroy(returned, allocator);
-    slot = null;
-
-    // Join thread — OS resource cleanup only.
     t.join();
 }
 
