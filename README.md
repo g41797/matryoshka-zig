@@ -1,14 +1,14 @@
 # matryoshka-io
 
-## The problem
+## Intent
 
-> There is no **coherent "Zig + Io system architecture layer"**. There are only isolated implementations of individual patterns.
+We know how to write Zig libraries.
 
-**This is the message. Don't shoot the messenger.**
+We are still learning how to build Zig systems.
 
-Matryoshka is the first, maybe naive, attempt to solve this problem.
+Zig **Io** makes developers' lives even more _interesting_.
 
-Matryoshka-io is about **building systems**.
+**Matryoshka** is my attempt to make them a little more _boring_.
 
 ## Three small building blocks
 
