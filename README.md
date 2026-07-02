@@ -18,21 +18,22 @@ Matryoshka-io is built on only three small source files.
 
 `PolyNode` is the bigger brother of Zig's intrusive `Node`.
 
-It adds one capability:
+Like `Node`, it is suitable for:
 
-* simple run-time type identification.
+* intrusive lists
+* intrusive queues
+* other intrusive containers
 
-It remains suitable for:
+In addition, it:
 
-* intrusive lists;
-* intrusive queues;
-* other intrusive containers.
+* is embedded into application objects
+* provides simple run-time type identification
 
-A `PolyNode` knows its concrete type without requiring:
+Given a `PolyNode`, the application can:
 
-* inheritance;
-* interfaces;
-* virtual functions.
+* safely recover the containing object
+* without interfaces
+* without virtual dispatch
 
 ### Mailbox
 
